@@ -1,9 +1,9 @@
 _base_ = 'grounding_dino_swin-t_pretrain_obj365.py'
 
-data_root = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Datasets/RGBS50_COCO/'
-class_name = ('ball_and_polyhedron', 'connected_polyhedron', 'fake_person', 'frustum', 'iron_ball', 'octahedron', 'uuv')
+data_root = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Datasets/UTDAC2020/'
+class_name = ('echinus', 'starfish', 'holothurian', 'scallop')
 num_classes = len(class_name)
-metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (106, 0, 228),(0, 60, 100), (0, 80, 100)])
+metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
 
 model = dict(bbox_head=dict(num_classes=num_classes))
 
@@ -58,22 +58,22 @@ train_dataloader = dict(
         return_classes=True,
         pipeline=train_pipeline,
         filter_cfg=dict(filter_empty_gt=False, min_size=32),
-        ann_file='instances_train.json',
-        data_prefix=dict(img='train_images/')))
+        ann_file='annotations/instances_train2017.json',
+        data_prefix=dict(img='train2017/')))
 
 val_dataloader = dict(
     dataset=dict(
         metainfo=metainfo,
         data_root=data_root,
-        ann_file='instances_val.json',
-        data_prefix=dict(img='val_images/')))
+        ann_file='annotations/instances_val2017.json',
+        data_prefix=dict(img='val2017/')))
 
 test_dataloader = val_dataloader
 
-val_evaluator = dict(ann_file=data_root + 'instances_val.json')
+val_evaluator = dict(ann_file=data_root + 'annotations/instances_val2017.json')
 test_evaluator = val_evaluator
 
-max_epoch = 25
+max_epoch = 12
 
 default_hooks = dict(
     checkpoint=dict(interval=1, max_keep_ckpts=1, save_best='auto'),
@@ -99,4 +99,4 @@ optim_wrapper = dict(
             'language_model': dict(lr_mult=0.0)
         }))
 
-load_from = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth'  # noqa
+load_from = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth'  # noqa
