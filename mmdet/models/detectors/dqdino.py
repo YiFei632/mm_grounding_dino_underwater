@@ -1,9 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Dict, Optional, Tuple
-
 import torch
 from torch import Tensor, nn
 from torch.nn.init import normal_
+from typing import Dict, Optional, Tuple, List
 
 from mmdet.registry import MODELS
 from mmdet.structures import OptSampleList
@@ -12,25 +11,44 @@ from ..layers import (CdnQueryGenerator, DeformableDetrTransformerEncoder,
                       DinoTransformerDecoder, SinePositionalEncoding)
 from .deformable_detr import DeformableDETR, MultiScaleDeformableAttention
 
+# 假设你已经将 ccm.py 和 cgfe.py 放在了同级目录的 modules 文件夹下
+# 如果放在同级目录，请改为 from .ccm import CategoricalCounting 等
+from mmdet.models.utils import CategoricalCounting
+from mmdet.models.utils import CGFE, MultiScaleFeature
 
 @MODELS.register_module()
-class DINO(DeformableDETR):
-    r"""Implementation of `DINO: DETR with Improved DeNoising Anchor Boxes
-    for End-to-End Object Detection <https://arxiv.org/abs/2203.03605>`_
-
-    Code is modified from the `official github repo
-    <https://github.com/IDEA-Research/DINO>`_.
-
-    Args:
-        dn_cfg (:obj:`ConfigDict` or dict, optional): Config of denoising
-            query generator. Defaults to `None`.
+class DQDINO(DeformableDETR):
+    """
+    DQ-DETR Transformer implementation.
+    Integrates CCM (Categorical Counting Module) and CGFE (Context-Guided Feature Enhancement).
     """
 
-    def __init__(self, *args, dn_cfg: OptConfigType = None, **kwargs) -> None:
+    def __init__(self,
+                 *args,
+                 ccm_cfg: OptConfigType = None,
+                 cgfe_cfg: OptConfigType = None,
+                 dynamic_query_list = None,
+                 dn_cfg: OptConfigType = None,
+                 **kwargs) -> None:
+
+        # print(kwargs.keys())
+        # print(f"1. ccm_cfg: {ccm_cfg}")             # <--- 直接打印变量名
+        # print(f"2. cgfe_cfg: {cgfe_cfg}")           # <--- 直接打印变量名
+        # print(f"3. dynamic_query_list: {dynamic_query_list}")
         super().__init__(*args, **kwargs)
         
         assert self.as_two_stage, 'as_two_stage must be True for DINO'
         assert self.with_box_refine, 'with_box_refine must be True for DINO'
+        
+        # 1. 初始化 DQ-DETR 特有模块
+        # 注意：这里需要确保 ccm_cfg 和 cgfe_cfg 在 config 中已定义
+        self.ccm = CategoricalCounting(**(ccm_cfg or {}))
+        self.cgfe = CGFE(**(cgfe_cfg or {}))
+        
+        # DQ-DETR 默认使用 5 尺度的 MultiScaleFeature，但 MMDet DINO 默认是 4 尺度
+        # 需要确保这里的 num_levels 与 backbone/neck 输出一致
+        is_5_scale = self.num_feature_levels == 5
+        self.multiscale = MultiScaleFeature(is_5_scale=is_5_scale)
 
         if dn_cfg is not None:
             assert 'num_classes' not in dn_cfg and \
@@ -42,6 +60,11 @@ class DINO(DeformableDETR):
             dn_cfg['num_classes'] = self.bbox_head.num_classes
             dn_cfg['embed_dims'] = self.embed_dims
             dn_cfg['num_matching_queries'] = self.num_queries
+        
+        self.dynamic_query_list = dynamic_query_list
+        
+        # 记录当前的 query 数量，用于日志或调试
+        self.current_num_queries = self.num_queries
         self.dn_query_generator = CdnQueryGenerator(**dn_cfg)
 
     def _init_layers(self) -> None:
@@ -80,86 +103,116 @@ class DINO(DeformableDETR):
         nn.init.xavier_uniform_(self.memory_trans_fc.weight)
         nn.init.xavier_uniform_(self.query_embedding.weight)
         normal_(self.level_embed)
-
-    def forward_transformer(
-        self,
+    
+    def forward_transformer(self,
         img_feats: Tuple[Tensor],
         batch_data_samples: OptSampleList = None,
     ) -> Dict:
-        """Forward process of Transformer.
-
-        The forward procedure of the transformer is defined as:
-        'pre_transformer' -> 'encoder' -> 'pre_decoder' -> 'decoder'
-        More details can be found at `TransformerDetector.forward_transformer`
-        in `mmdet/detector/base_detr.py`.
-        The difference is that the ground truth in `batch_data_samples` is
-        required for the `pre_decoder` to prepare the query of DINO.
-        Additionally, DINO inherits the `pre_transformer` method and the
-        `forward_encoder` method of DeformableDETR. More details about the
-        two methods can be found in `mmdet/detector/deformable_detr.py`.
-
-        Args:
-            img_feats (tuple[Tensor]): Tuple of feature maps from neck. Each
-                feature map has shape (bs, dim, H, W).
-            batch_data_samples (list[:obj:`DetDataSample`]): The batch
-                data samples. It usually includes information such
-                as `gt_instance` or `gt_panoptic_seg` or `gt_sem_seg`.
-                Defaults to None.
-
-        Returns:
-            dict: The dictionary of bbox_head function inputs, which always
-            includes the `hidden_states` of the decoder output and may contain
-            `references` including the initial and intermediate references.
+        """
+        Overriding forward to insert CCM and CGFE logic between Encoder and Decoder.
         """
         encoder_inputs_dict, decoder_inputs_dict = self.pre_transformer(
             img_feats, batch_data_samples)
-
+        # -----------------------------------------------------------
+        # Step 1: Encoder
+        # -----------------------------------------------------------
         encoder_outputs_dict = self.forward_encoder(**encoder_inputs_dict)
+            # 注意：encoder 返回值可能因版本略有不同，通常是 (memory, spatial_shapes, ...)
+        # 开始加入修改逻辑
+        # print(encoder_outputs_dict.keys())
+        memory = encoder_outputs_dict['memory']
+        memory_mask = encoder_outputs_dict['memory_mask']
+        spatial_shapes = encoder_outputs_dict['spatial_shapes']
+        
+
+        # -----------------------------------------------------------
+        # Step 2: DQ-DETR Core Logic (CCM & CGFE)
+        # -----------------------------------------------------------
+        
+        # 2.1 CCM 需要恢复空间结构
+        # DQ-DETR 的 CCM 实现依赖于特定的空间结构输入，这里需要适配
+        # 假设 memory 是 (bs, num_feat, c)
+        
+        # 运行 CCM
+        counting_output, ccm_feature = self.ccm(memory, spatial_shapes)
+        
+        # 2.2 CGFE 特征增强
+        multi_ccm_feature = self.multiscale(ccm_feature)
+        
+        # memory_enhanced: (bs, num_feat, c)
+        memory_enhanced = self.cgfe(multi_ccm_feature, memory, spatial_shapes)
+
+        if memory_mask is not None:
+            # 检查特征长度和掩码长度是否一致
+            feat_len = memory_enhanced.size(1)
+            mask_len = memory_mask.size(1)
+            
+            if feat_len > mask_len:
+                # 计算缺失的长度 (例如 224)
+                diff = feat_len - mask_len
+                
+                # 创建全为 False (Valid) 的掩码
+                # 注意：在 MMDetection Transformer 中，False 表示有效像素，True 表示 Padding
+                extra_mask = torch.zeros(
+                    (memory_mask.size(0), diff),
+                    dtype=memory_mask.dtype,
+                    device=memory_mask.device
+                )
+                
+                # 拼接到原 mask 后面
+                memory_mask = torch.cat([memory_mask, extra_mask], dim=1)
+
+        # 2.3 动态选择 Query 数量
+        # 获取分类结果中概率最大的类别索引
+        # counting_output: (bs, num_classes)
+        # Use detach() only for index selection to avoid gradient issues
+        _, predicted_density_idx = torch.max(counting_output, 1)
+        
+        # 策略：取当前 Batch 中最拥挤的那张图对应的等级，作为整个 Batch 的 Query 数量
+        # 这样可以保持 Batch Tensor 维度对齐
+        if self.training:
+             # 训练时也可以选择使用最大值，或者固定使用最大配置以稳定训练
+            batch_max_idx = max(predicted_density_idx.tolist())
+            num_select = self.dynamic_query_list[batch_max_idx]
+        else:
+            # 推理时动态调整
+            batch_max_idx = max(predicted_density_idx.tolist())
+            num_select = self.dynamic_query_list[batch_max_idx]
+
+        self.current_num_queries = num_select
 
         tmp_dec_in, head_inputs_dict = self.pre_decoder(
-            **encoder_outputs_dict, batch_data_samples=batch_data_samples)
+            memory_enhanced, memory_mask, num_select, spatial_shapes ,batch_data_samples=batch_data_samples)
         decoder_inputs_dict.update(tmp_dec_in)
 
         decoder_outputs_dict = self.forward_decoder(**decoder_inputs_dict)
         head_inputs_dict.update(decoder_outputs_dict)
+
+        # Ensure CCM parameters get gradients in DDP training
+        # Add counting_output with a very small coefficient to prevent "Expected to mark
+        # a variable ready only once" error in distributed training
+        if self.training:
+            # Add a negligible term to ensure all CCM parameters participate in gradient computation
+            # This is critical for DDP training to work correctly
+            head_inputs_dict['hidden_states'][0] = head_inputs_dict['hidden_states'][0] + \
+                counting_output.sum() * 1e-10
+
         return head_inputs_dict
+
+
+    
 
     def pre_decoder(
         self,
         memory: Tensor,
         memory_mask: Tensor,
+        num_select,
         spatial_shapes: Tensor,
         batch_data_samples: OptSampleList = None,
-    ) -> Tuple[Dict]:
-        """Prepare intermediate variables before entering Transformer decoder,
-        such as `query`, `query_pos`, and `reference_points`.
+    ) -> Tuple[Dict, Dict]:
 
-        Args:
-            memory (Tensor): The output embeddings of the Transformer encoder,
-                has shape (bs, num_feat_points, dim).
-            memory_mask (Tensor): ByteTensor, the padding mask of the memory,
-                has shape (bs, num_feat_points). Will only be used when
-                `as_two_stage` is `True`.
-            spatial_shapes (Tensor): Spatial shapes of features in all levels.
-                With shape (num_levels, 2), last dimension represents (h, w).
-                Will only be used when `as_two_stage` is `True`.
-            batch_data_samples (list[:obj:`DetDataSample`]): The batch
-                data samples. It usually includes information such
-                as `gt_instance` or `gt_panoptic_seg` or `gt_sem_seg`.
-                Defaults to None.
 
-        Returns:
-            tuple[dict]: The decoder_inputs_dict and head_inputs_dict.
 
-            - decoder_inputs_dict (dict): The keyword dictionary args of
-              `self.forward_decoder()`, which includes 'query', 'memory',
-              `reference_points`, and `dn_mask`. The reference points of
-              decoder input here are 4D boxes, although it has `points`
-              in its name.
-            - head_inputs_dict (dict): The keyword dictionary args of the
-              bbox_head functions, which includes `topk_score`, `topk_coords`,
-              and `dn_meta` when `self.training` is `True`, else is empty.
-        """
         bs, _, c = memory.shape
         cls_out_features = self.bbox_head.cls_branches[
             self.decoder.num_layers].out_features
@@ -177,7 +230,7 @@ class DINO(DeformableDETR):
         # is `enc_outputs_class[..., 0]` selects according to scores of
         # binary classification.
         topk_indices = torch.topk(
-            enc_outputs_class.max(-1)[0], k=self.num_queries, dim=1)[1]
+            enc_outputs_class.max(-1)[0], k=num_select, dim=1)[1]
         topk_score = torch.gather(
             enc_outputs_class, 1,
             topk_indices.unsqueeze(-1).repeat(1, 1, cls_out_features))
@@ -187,11 +240,19 @@ class DINO(DeformableDETR):
         topk_coords = topk_coords_unact.sigmoid()
         topk_coords_unact = topk_coords_unact.detach()
 
-        query = self.query_embedding.weight[:, None, :]
+        query = self.query_embedding.weight[:num_select, None, :]
         query = query.repeat(1, bs, 1).transpose(0, 1)
         if self.training:
+            # Temporarily modify num_matching_queries to match dynamic num_select
+            original_num_matching_queries = self.dn_query_generator.num_matching_queries
+            self.dn_query_generator.num_matching_queries = num_select
+
             dn_label_query, dn_bbox_query, dn_mask, dn_meta = \
                 self.dn_query_generator(batch_data_samples)
+
+            # Restore original value
+            self.dn_query_generator.num_matching_queries = original_num_matching_queries
+
             query = torch.cat([dn_label_query, query], dim=1)
             reference_points = torch.cat([dn_bbox_query, topk_coords_unact],
                                          dim=1)
@@ -213,7 +274,7 @@ class DINO(DeformableDETR):
             enc_outputs_coord=topk_coords,
             dn_meta=dn_meta) if self.training else dict()
         return decoder_inputs_dict, head_inputs_dict
-
+    
     def forward_decoder(self,
                         query: Tensor,
                         memory: Tensor,
@@ -275,12 +336,13 @@ class DINO(DeformableDETR):
             reg_branches=self.bbox_head.reg_branches,
             **kwargs)
 
-        if len(query) == self.num_queries:
+        if self.training:
             # NOTE: This is to make sure label_embeding can be involved to
             # produce loss even if there is no denoising query (no ground truth
             # target in this GPU), otherwise, this will raise runtime error in
             # distributed training.
-            inter_states[0] += \
+            # In DQDINO, we always add this term to ensure the parameter gets gradients
+            inter_states[0] = inter_states[0] + \
                 self.dn_query_generator.label_embedding.weight[0, 0] * 0.0
 
         decoder_outputs_dict = dict(

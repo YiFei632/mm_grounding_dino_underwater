@@ -1,6 +1,6 @@
 # dataset settings
-dataset_type = 'Objects365V1Dataset'
-data_root = '/media/fishyu/fish-14tb-2/YiFei/Dataset/Objects365_v1/raw/Objects365_v1/2019-08-02/'
+dataset_type = 'Objects365V2Dataset'
+data_root = '/media/fishyu/fish-14tb-2/YiFei/Dataset/Objects365'
 
 # Example to use different file client
 # Method 1: simply set the data root and let the file I/O module
@@ -36,30 +36,29 @@ test_pipeline = [
 ]
 train_dataloader = dict(
     batch_size=2,
-    num_workers=4,
+    num_workers=2,
     persistent_workers=True,
-    prefetch_factor=4,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=dict(type='AspectRatioBatchSampler'),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='objects365_train.json',
-        data_prefix=dict(img='train/'),
+        ann_file='annotations/train_coco.json',
+        data_prefix=dict(img='raw/Objects365/data/train/'),
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         pipeline=train_pipeline,
         backend_args=backend_args))
 val_dataloader = dict(
-    batch_size=2,
-    num_workers=4,
+    batch_size=1,
+    num_workers=2,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='objects365_val.json',
-        data_prefix=dict(img='val/'),
+        ann_file='annotations/val_coco.json',
+        data_prefix=dict(img='raw/Objects365/data/val/'),
         test_mode=True,
         pipeline=test_pipeline,
         backend_args=backend_args))
@@ -67,7 +66,7 @@ test_dataloader = val_dataloader
 
 val_evaluator = dict(
     type='CocoMetric',
-    ann_file=data_root + 'objects365_val.json',
+    ann_file=data_root + '/annotations/val_coco.json',
     metric='bbox',
     sort_categories=True,
     format_only=False,
