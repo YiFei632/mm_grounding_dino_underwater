@@ -79,7 +79,7 @@ model = dict(
         temperature=20),  # 10000 for DeformDETR
     bbox_head=dict(
         type='DINOHead',
-        num_classes=365,
+        num_classes=4,
         sync_cls_avg_factor=True,
         loss_cls=dict(
             type='FocalLoss',
@@ -191,7 +191,7 @@ param_scheduler = [
 # USER SHOULD NOT CHANGE ITS VALUES.
 # base_batch_size = (8 GPUs) x (2 samples per GPU)
 auto_scale_lr = dict(base_batch_size=64, enable=True)  # 1*8*4=32
-# load_from = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/dq_dino_swin-l.pth'
+load_from = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/work_dirs/dqdino_pretrained_swin-l_5scale_o365v1/epoch_1.pth'
 
 model_wrapper_cfg = dict(
     type='MMDistributedDataParallel',
