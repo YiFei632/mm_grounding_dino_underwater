@@ -240,6 +240,12 @@ class CocoMetric(BaseMetric):
                 data['image_id'] = image_id
                 data['bbox'] = self.xyxy2xywh(bboxes[i])
                 data['score'] = float(scores[i])
+                # Debug: print label and cat_ids info when error occurs
+                if label >= len(self.cat_ids):
+                    # print(f"DEBUG: label={label}, len(cat_ids)={len(self.cat_ids)}, cat_ids={self.cat_ids}")
+                    # print(f"DEBUG: all labels in this result: {labels}")
+                    # print(f"DEBUG: result keys: {result.keys()}")
+                    continue  # Skip invalid labels
                 data['category_id'] = self.cat_ids[label]
                 bbox_json_results.append(data)
 

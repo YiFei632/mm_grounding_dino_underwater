@@ -1,11 +1,11 @@
-_base_ = '../detr/detr_r50_8xb2-150e_coco.py'
+_base_ = '../../detr/detr_r50_8xb2-150e_coco.py'
 
-data_root = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Datasets/UTDAC2020/'
-class_name = ('echinus', 'starfish', 'holothurian', 'scallop')
+data_root = '/home/user/YiFei/Datasets/RGBS50_comb/'
+class_name = ('ball', 'polyhedron', 'person', 'frustum', 'ironball', 'octahedron', 'uuv')
 num_classes = len(class_name)
-metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
+metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
 
-model = dict(num_queries=1200,backbone=dict(init_cfg=dict(type='Pretrained', checkpoint='/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/resnet50-0676ba61.pth')),bbox_head=dict(num_classes=num_classes))
+model = dict(backbone=dict(init_cfg=dict(type='Pretrained', checkpoint='/home/user/YiFei/Grounding_DINO/mm_grounding_dino_underwater/checkpoints/resnet50-0676ba61.pth')),bbox_head=dict(num_classes=num_classes))
 
 train_pipeline = [
     dict(type='LoadImageFromFile'),
@@ -58,22 +58,22 @@ train_dataloader = dict(
         return_classes=True,
         pipeline=train_pipeline,
         filter_cfg=dict(filter_empty_gt=False, min_size=32),
-        ann_file='annotations/instances_train2017.json',
-        data_prefix=dict(img='train2017/')))
+        ann_file='annotations/instances_train.json',
+        data_prefix=dict(img='images/')))
 
 val_dataloader = dict(
     dataset=dict(
         metainfo=metainfo,
         data_root=data_root,
-        ann_file='annotations/instances_val2017.json',
-        data_prefix=dict(img='val2017/')))
+        ann_file='annotations/instances_val.json',
+        data_prefix=dict(img='images/')))
 
 test_dataloader = val_dataloader
 
-val_evaluator = dict(ann_file=data_root + 'annotations/instances_val2017.json')
+val_evaluator = dict(ann_file=data_root + 'annotations/instances_val.json')
 test_evaluator = val_evaluator
 
-max_epoch = 24
+max_epoch = 2
 
 default_hooks = dict(
     checkpoint=dict(interval=1, max_keep_ckpts=1, save_best='auto'),
@@ -91,5 +91,3 @@ param_scheduler = [
 ]
 
 optim_wrapper = dict(optimizer=dict(lr=0.0005))
-
-load_from = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/detr_r50_8xb2-150e_coco_20221023_153551-436d03e8.pth'  # noqa

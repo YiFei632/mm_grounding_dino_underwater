@@ -1,6 +1,6 @@
 _base_ = 'grounding_dino_swin-t_pretrain_obj365.py'
 
-data_root = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Datasets/UTDAC2020/'
+data_root = '/home/user/YiFei/Datasets/UTDAC2020/'
 class_name = ('echinus', 'starfish', 'holothurian', 'scallop')
 num_classes = len(class_name)
 metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
@@ -50,6 +50,8 @@ train_pipeline = [
 ]
 
 train_dataloader = dict(
+    batch_size=1,  # 每卡1个样本，4卡总共4样本
+    num_workers=2,
     dataset=dict(
         _delete_=True,
         type='CocoDataset',
@@ -62,6 +64,8 @@ train_dataloader = dict(
         data_prefix=dict(img='train2017/')))
 
 val_dataloader = dict(
+    batch_size=1,  # 每卡1个样本，4卡总共4样本
+    num_workers=2,
     dataset=dict(
         metainfo=metainfo,
         data_root=data_root,
@@ -73,7 +77,7 @@ test_dataloader = val_dataloader
 val_evaluator = dict(ann_file=data_root + 'annotations/instances_val2017.json')
 test_evaluator = val_evaluator
 
-max_epoch = 24
+max_epoch = 1
 
 default_hooks = dict(
     checkpoint=dict(interval=1, max_keep_ckpts=1, save_best='auto'),
@@ -91,6 +95,7 @@ param_scheduler = [
 ]
 
 optim_wrapper = dict(
+    type='AmpOptimWrapper',  # 启用自动混合精度
     optimizer=dict(lr=0.0005),
     paramwise_cfg=dict(
         custom_keys={
@@ -99,4 +104,4 @@ optim_wrapper = dict(
             'language_model': dict(lr_mult=0.0)
         }))
 
-load_from = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth'  # noqa
+load_from = '/home/user/YiFei/Grounding_DINO/mm_grounding_dino_underwater/checkpoints/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth'  # noqa

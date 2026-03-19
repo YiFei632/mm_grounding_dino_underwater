@@ -1,11 +1,39 @@
-_base_ = '../detr/detr_r50_8xb2-150e_coco.py'
+_base_ = '../../dino/dino-4scale_r50_8xb2-12e_coco.py'
 
-data_root = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Datasets/UTDAC2020/'
-class_name = ('echinus', 'starfish', 'holothurian', 'scallop')
+data_root = '/home/user/YiFei/Datasets/RGBS50_image/'
+class_name = ('ball_and_polyhedron', 'connected_polyhedron', 'fake_person', 'frustum', 'iron_ball', 'octahedron', 'uuv')
 num_classes = len(class_name)
-metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
+metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
 
-model = dict(num_queries=200,backbone=dict(init_cfg=dict(type='Pretrained', checkpoint='/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/resnet50-0676ba61.pth')),bbox_head=dict(num_classes=num_classes))
+pretrained = '/home/user/YiFei/Grounding_DINO/mm_grounding_dino_underwater/checkpoints/swin_large_patch4_window12_384_22k.pth'  # noqa
+num_levels = 5
+model = dict(
+    num_feature_levels=num_levels,
+    backbone=dict(
+        _delete_=True,
+        type='SwinTransformer',
+        pretrain_img_size=384,
+        embed_dims=192,
+        depths=[2, 2, 18, 2],
+        num_heads=[6, 12, 24, 48],
+        window_size=12,
+        mlp_ratio=4,
+        qkv_bias=True,
+        qk_scale=None,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        drop_path_rate=0.2,
+        patch_norm=True,
+        out_indices=(0, 1, 2, 3),
+        # Please only add indices that would be used
+        # in FPN, otherwise some parameter will not be used
+        with_cp=True,
+        convert_weights=True,
+        init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
+    neck=dict(in_channels=[192, 384, 768, 1536], num_outs=num_levels),
+    encoder=dict(layer_cfg=dict(self_attn_cfg=dict(num_levels=num_levels))),
+    decoder=dict(layer_cfg=dict(cross_attn_cfg=dict(num_levels=num_levels))),
+    bbox_head=dict(num_classes=7))
 
 train_pipeline = [
     dict(type='LoadImageFromFile'),
@@ -50,6 +78,9 @@ train_pipeline = [
 ]
 
 train_dataloader = dict(
+    batch_size=1,  # 每卡1个样本，4卡总共4样本
+    num_workers=2,
+    persistent_workers=True,
     dataset=dict(
         _delete_=True,
         type='CocoDataset',
@@ -58,22 +89,25 @@ train_dataloader = dict(
         return_classes=True,
         pipeline=train_pipeline,
         filter_cfg=dict(filter_empty_gt=False, min_size=32),
-        ann_file='annotations/instances_train2017.json',
-        data_prefix=dict(img='train2017/')))
+        ann_file='instances_train.json',
+        data_prefix=dict(img='train_images/')))
 
 val_dataloader = dict(
+    batch_size=1,  # 每卡1个样本，4卡总共4样本
+    num_workers=2,
+    persistent_workers=True,
     dataset=dict(
         metainfo=metainfo,
         data_root=data_root,
-        ann_file='annotations/instances_val2017.json',
-        data_prefix=dict(img='val2017/')))
+        ann_file='instances_val.json',
+        data_prefix=dict(img='val_images/')))
 
 test_dataloader = val_dataloader
 
-val_evaluator = dict(ann_file=data_root + 'annotations/instances_val2017.json')
+val_evaluator = dict(ann_file=data_root + 'instances_val.json')
 test_evaluator = val_evaluator
 
-max_epoch = 24
+max_epoch = 2
 
 default_hooks = dict(
     checkpoint=dict(interval=1, max_keep_ckpts=1, save_best='auto'),
@@ -90,6 +124,11 @@ param_scheduler = [
         gamma=0.1)
 ]
 
-optim_wrapper = dict(optimizer=dict(lr=0.0005))
-
-load_from = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/detr_r50_8xb2-150e_coco_20221023_153551-436d03e8.pth'  # noqa
+optim_wrapper = dict(
+    type='OptimWrapper',  # 改用普通优化器，避免AMP数值不稳定
+    optimizer=dict(
+        type='AdamW',
+        lr=0.0001,  # 降低学习率从0.0005到0.0001，避免数值爆炸
+        weight_decay=0.0001),
+    clip_grad=dict(max_norm=0.1, norm_type=2),
+    paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.1)}))

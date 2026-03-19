@@ -511,7 +511,13 @@ class GroundingDINO(DINO):
                 enhanced_text_prompts.append(data_samples.caption_prompt)
             else:
                 enhanced_text_prompts.append(None)
-            tokens_positives.append(data_samples.get('tokens_positive', None))
+
+            # Convert tokens_positive from dict to list format for prediction
+            tokens_positive = data_samples.get('tokens_positive', None)
+            if tokens_positive is not None and isinstance(tokens_positive, dict):
+                # Convert {label_id: [[beg, end]]} to [[[beg, end]], [[beg, end]], ...]
+                tokens_positive = [tokens_positive[i] for i in sorted(tokens_positive.keys())]
+            tokens_positives.append(tokens_positive)
 
         if 'custom_entities' in batch_data_samples[0]:
             # Assuming that the `custom_entities` flag

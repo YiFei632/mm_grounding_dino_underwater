@@ -128,6 +128,17 @@ class HungarianAssigner(BaseAssigner):
             raise ImportError('Please run "pip install scipy" '
                               'to install scipy first.')
 
+        # Handle invalid values (NaN, Inf) in cost matrix
+        if torch.isnan(cost).any() or torch.isinf(cost).any():
+            # Replace NaN with large value, Inf with very large value
+            cost = torch.where(torch.isnan(cost), torch.tensor(1e8), cost)
+            cost = torch.where(torch.isinf(cost) & (cost > 0), torch.tensor(1e8), cost)
+            cost = torch.where(torch.isinf(cost) & (cost < 0), torch.tensor(-1e8), cost)
+            import warnings
+            warnings.warn('Cost matrix contains NaN or Inf values. '
+                         'This might indicate numerical instability. '
+                         'Consider reducing learning rate or checking data quality.')
+
         matched_row_inds, matched_col_inds = linear_sum_assignment(cost)
         matched_row_inds = torch.from_numpy(matched_row_inds).to(device)
         matched_col_inds = torch.from_numpy(matched_col_inds).to(device)

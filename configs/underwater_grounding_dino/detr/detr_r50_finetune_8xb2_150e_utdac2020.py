@@ -1,11 +1,11 @@
 _base_ = '../../detr/detr_r50_8xb2-150e_coco.py'
 
-data_root = '/media/fishyu/fish-14tb-2/YiFei/Dataset/UTDAC2020'
+data_root = '/home/user/YiFei/Datasets/UTDAC2020/'
 class_name = ('echinus', 'starfish', 'holothurian', 'scallop')
 num_classes = len(class_name)
 metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
 
-model = dict(backbone=dict(init_cfg=dict(type='Pretrained', checkpoint='/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/checkpoints/resnet50-0676ba61.pth')),bbox_head=dict(num_classes=num_classes))
+model = dict(backbone=dict(init_cfg=dict(type='Pretrained', checkpoint='/home/user/YiFei/Grounding_DINO/mm_grounding_dino_underwater/checkpoints/resnet50-0676ba61.pth')),bbox_head=dict(num_classes=num_classes))
 
 train_pipeline = [
     dict(type='LoadImageFromFile'),
@@ -92,4 +92,4 @@ param_scheduler = [
 
 optim_wrapper = dict(optimizer=dict(lr=0.0005))
 
-load_from = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/checkpoints/detr_r50_8xb2-150e_coco_20221023_153551-436d03e8.pth'  # noqa
+load_from = '/home/user/YiFei/Grounding_DINO/mm_grounding_dino_underwater/checkpoints/detr_r50_8xb2-150e_coco_20221023_153551-436d03e8.pth'  # noqa

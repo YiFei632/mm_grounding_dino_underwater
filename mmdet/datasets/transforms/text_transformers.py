@@ -60,7 +60,7 @@ def check_for_positive_overflow(gt_bboxes, gt_labels, text, tokenizer,
             keep_gt_labels.append(gt_labels[i])
 
     return gt_bboxes[keep_box_index], np.array(
-        keep_gt_labels, dtype=np.long), length
+        keep_gt_labels, dtype=int), length
 
 
 def generate_senetence_given_labels(positive_label_list, negative_label_list,
@@ -101,7 +101,8 @@ class RandomSamplingNegPos(BaseTransform):
                  num_sample_negative=85,
                  max_tokens=256,
                  full_sampling_prob=0.5,
-                 label_map_file=None):
+                 label_map_file=None,
+                 use_all_classes_for_eval=False):
         if AutoTokenizer is None:
             raise RuntimeError(
                 'transformers is not installed, please install it by: '
@@ -111,6 +112,7 @@ class RandomSamplingNegPos(BaseTransform):
         self.num_sample_negative = num_sample_negative
         self.full_sampling_prob = full_sampling_prob
         self.max_tokens = max_tokens
+        self.use_all_classes_for_eval = use_all_classes_for_eval
         self.label_map = None
         if label_map_file:
             with open(label_map_file, 'r') as file:
@@ -163,6 +165,28 @@ class RandomSamplingNegPos(BaseTransform):
         for key, value in text.items():
             if '/' in value:
                 text[key] = random.choice(value.split('/')).strip()
+
+        # For evaluation with empty annotations, use all classes
+        if self.use_all_classes_for_eval and len(gt_labels) == 0:
+            # Generate text prompt with all classes
+            all_label_list = [int(k) for k in text.keys()]
+            random.shuffle(all_label_list)
+
+            label_to_positions = {}
+            pheso_caption = ''
+
+            for index, label in enumerate(all_label_list):
+                start_index = len(pheso_caption)
+                pheso_caption += clean_name(text[str(label)])
+                end_index = len(pheso_caption)
+                label_to_positions[index] = [[start_index, end_index]]
+                pheso_caption += '. '
+
+            results['gt_bboxes'] = gt_bboxes
+            results['gt_bboxes_labels'] = gt_labels
+            results['text'] = pheso_caption
+            results['tokens_positive'] = label_to_positions
+            return results
 
         gt_bboxes, gt_labels, positive_caption_length = \
             check_for_positive_overflow(gt_bboxes, gt_labels,
@@ -252,4 +276,39 @@ class LoadTextAnnotations(BaseTransform):
         else:
             text = results['text']
             results['text'] = list(text.values())
+        return results
+
+
+@TRANSFORMS.register_module()
+class LoadClassNamesAsText(BaseTransform):
+    """Load class names from dataset metainfo and add as text field.
+
+    This transform extracts class names from the dataset's metainfo
+    and creates a text dictionary mapping class IDs to class names.
+    This allows the model to learn from actual class names in the dataset
+    rather than relying on a predefined label_map.
+
+    Args:
+        classes (tuple or list): List of class names. If not provided,
+            will try to get from results['dataset_metainfo'].
+    """
+
+    def __init__(self, classes=None):
+        self.classes = classes
+
+    def transform(self, results: dict) -> dict:
+        # Get class names from init parameter or dataset metainfo
+        classes = self.classes
+        if classes is None and 'dataset_metainfo' in results:
+            classes = results['dataset_metainfo'].get('classes', None)
+
+        if classes is not None:
+            # Create text dictionary mapping class ID to class name
+            # Note: COCO format uses 1-based indexing, but internally we use 0-based
+            text = {}
+            for idx, class_name in enumerate(classes):
+                # Clean the class name: replace underscores with spaces
+                cleaned_name = class_name.replace('_', ' ')
+                text[str(idx)] = cleaned_name
+            results['text'] = text
         return results
