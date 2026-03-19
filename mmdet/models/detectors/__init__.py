@@ -61,6 +61,7 @@ from .yolox import YOLOX
 from .dq_detr import DQDETR
 from .dqdino import DQDINO
 from .ucf_dino import UCFDINO, GatedFusion
+from .third_grounding_dino import ThirdGroundingDINO
 
 __all__ = [
     'ATSS', 'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
@@ -74,5 +75,6 @@ __all__ = [
     'MaskFormer', 'DDOD', 'Mask2Former', 'SemiBaseDetector', 'SoftTeacher',
     'RTMDet', 'Detectron2Wrapper', 'CrowdDet', 'CondInst', 'BoxInst',
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
-    'DDQDETR', 'GroundingDINO', 'DQDETR', 'DQDINO', 'UCFDINO', 'GatedFusion'
+    'DDQDETR', 'GroundingDINO', 'DQDETR', 'DQDINO', 'UCFDINO', 'GatedFusion',
+    'ThirdGroundingDINO'
 ]

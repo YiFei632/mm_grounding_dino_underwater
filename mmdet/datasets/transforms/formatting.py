@@ -85,6 +85,20 @@ class PackDetInputs(BaseTransform):
 
             packed_results['inputs'] = img
 
+        # Process sonar image if exists
+        if 'sonar_img' in results:
+            sonar_img = results['sonar_img']
+            if len(sonar_img.shape) < 3:
+                sonar_img = np.expand_dims(sonar_img, -1)
+            # Same optimization as RGB image processing
+            if not sonar_img.flags.c_contiguous:
+                sonar_img = np.ascontiguousarray(sonar_img.transpose(2, 0, 1))
+                sonar_img = to_tensor(sonar_img)
+            else:
+                sonar_img = to_tensor(sonar_img).permute(2, 0, 1).contiguous()
+            # Store sonar_img in data_sample for later use
+            # We'll add it to data_sample after it's created
+
         if 'gt_ignore_flags' in results:
             valid_idx = np.where(results['gt_ignore_flags'] == 0)[0]
             ignore_idx = np.where(results['gt_ignore_flags'] == 1)[0]
@@ -136,6 +150,19 @@ class PackDetInputs(BaseTransform):
             if key in results:
                 img_meta[key] = results[key]
         data_sample.set_metainfo(img_meta)
+
+        # Add sonar image to data_sample if it exists
+        if 'sonar_img' in results:
+            data_sample.sonar_img = sonar_img
+
+        # Add text prompt to data_sample if it exists
+        if 'text' in results:
+            data_sample.text = results['text']
+
+        # Add tokens_positive to data_sample if it exists
+        if 'tokens_positive' in results:
+            data_sample.tokens_positive = results['tokens_positive']
+
         packed_results['data_samples'] = data_sample
 
         return packed_results

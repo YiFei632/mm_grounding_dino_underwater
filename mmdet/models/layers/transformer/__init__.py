@@ -15,6 +15,9 @@ from .dino_layers import CdnQueryGenerator, DinoTransformerDecoder
 from .grounding_dino_layers import (GroundingDinoTransformerDecoder,
                                     GroundingDinoTransformerDecoderLayer,
                                     GroundingDinoTransformerEncoder)
+from .third_grounding_dino_layers import (ThirdGroundingDinoTransformerDecoder,
+                                          ThirdGroundingDinoTransformerDecoderLayer,
+                                          ThirdGroundingDinoTransformerEncoder)
 from .mask2former_layers import (Mask2FormerTransformerDecoder,
                                  Mask2FormerTransformerDecoderLayer,
                                  Mask2FormerTransformerEncoder)
@@ -37,5 +40,7 @@ __all__ = [
     'CdnQueryGenerator', 'Mask2FormerTransformerEncoder',
     'Mask2FormerTransformerDecoderLayer', 'Mask2FormerTransformerDecoder',
     'GroundingDinoTransformerDecoderLayer', 'GroundingDinoTransformerEncoder',
-    'GroundingDinoTransformerDecoder'
+    'GroundingDinoTransformerDecoder',
+    'ThirdGroundingDinoTransformerDecoderLayer', 'ThirdGroundingDinoTransformerEncoder',
+    'ThirdGroundingDinoTransformerDecoder'
 ]

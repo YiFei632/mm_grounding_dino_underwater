@@ -9,6 +9,7 @@ from mmcv.transforms import BaseTransform
 from mmcv.transforms import LoadAnnotations as MMCV_LoadAnnotations
 from mmcv.transforms import LoadImageFromFile
 from mmengine.fileio import get
+from mmengine.registry import TRANSFORMS as MMENGINE_TRANSFORMS
 from mmengine.structures import BaseDataElement
 
 from mmdet.registry import TRANSFORMS
@@ -1071,4 +1072,150 @@ class LoadTrackAnnotations(LoadAnnotations):
         repr_str += f'poly2mask={self.poly2mask}, '
         repr_str += f"imdecode_backend='{self.imdecode_backend}', "
         repr_str += f'file_client_args={self.file_client_args})'
+        return repr_str
+
+
+@TRANSFORMS.register_module()
+@MMENGINE_TRANSFORMS.register_module()
+class LoadSonarImage(BaseTransform):
+    """Load sonar image from file.
+
+    This transform loads the sonar image corresponding to the RGB image
+    from a separate sonar dataset with the same filename.
+
+    Required Keys:
+
+    - img_path
+
+    Added Keys:
+
+    - sonar_img (np.ndarray): The loaded sonar image
+    - sonar_path (str): Path to the sonar image
+    - sonar_shape (tuple): Shape of the sonar image (H, W)
+
+    Args:
+        sonar_data_root (str): Root directory of the sonar dataset.
+            Should contain 'train_images' and 'val_images' subdirectories.
+            If None, will try to infer from img_path by replacing RGB root.
+            Defaults to None.
+        to_float32 (bool): Whether to convert the loaded image to a float32
+            numpy array. If set to False, the loaded image is an uint8 array.
+            Defaults to False.
+        color_type (str): The flag argument for :func:`mmcv.imfrombytes`.
+            Defaults to 'color'.
+        imdecode_backend (str): The image decoding backend type.
+            Defaults to 'cv2'.
+        backend_args (dict, optional): Arguments to instantiate the
+            corresponding backend. Defaults to None.
+        use_zero_fallback (bool): If True, use zero tensor when sonar image
+            is missing. If False, raise error. Defaults to False.
+    """
+
+    def __init__(self,
+                 sonar_data_root: Optional[str] = None,
+                 to_float32: bool = False,
+                 color_type: str = 'color',
+                 imdecode_backend: str = 'cv2',
+                 backend_args: Optional[dict] = None,
+                 use_zero_fallback: bool = False) -> None:
+        self.sonar_data_root = sonar_data_root
+        self.to_float32 = to_float32
+        self.color_type = color_type
+        self.imdecode_backend = imdecode_backend
+        self.backend_args = backend_args
+        self.use_zero_fallback = use_zero_fallback
+
+    def transform(self, results: dict) -> dict:
+        """Transform function to load sonar image.
+
+        Args:
+            results (dict): Result dict from dataset.
+
+        Returns:
+            dict: The dict contains loaded sonar image and meta information.
+        """
+        import os
+        import warnings
+
+        # Get RGB image path
+        img_path = results['img_path']
+
+        # Extract filename from RGB image path
+        filename = os.path.basename(img_path)
+
+        # Determine which split (train or val) based on the path
+        if 'train' in img_path or '/train_images/' in img_path:
+            split = 'train_images'
+        elif 'val' in img_path or '/val_images/' in img_path:
+            split = 'val_images'
+        else:
+            # Fallback: try to detect from parent directory name
+            parent_dir = os.path.basename(os.path.dirname(img_path))
+            if 'train' in parent_dir.lower():
+                split = 'train_images'
+            elif 'val' in parent_dir.lower():
+                split = 'val_images'
+            else:
+                # Default to train if cannot determine
+                split = 'train_images'
+                warnings.warn(
+                    f'Cannot determine train/val split from path: {img_path}. '
+                    f'Defaulting to train_images.')
+
+        # Construct sonar image path
+        if self.sonar_data_root is not None:
+            sonar_path = os.path.join(self.sonar_data_root, split, filename)
+        else:
+            # Fallback: try to infer by replacing RGBS50_image with RGBS50_sonar
+            if 'RGBS50_image' in img_path:
+                sonar_path = img_path.replace('RGBS50_image', 'RGBS50_sonar')
+            else:
+                raise ValueError(
+                    f'sonar_data_root is not specified and cannot infer '
+                    f'sonar path from img_path: {img_path}')
+
+        # Load sonar image
+        try:
+            img_bytes = get(sonar_path, backend_args=self.backend_args)
+            sonar_img = mmcv.imfrombytes(
+                img_bytes, flag=self.color_type, backend=self.imdecode_backend)
+
+            # Validate sonar image
+            if sonar_img is None or sonar_img.size == 0:
+                raise ValueError(f'Loaded sonar image is empty or invalid')
+
+        except Exception as e:
+            if self.use_zero_fallback:
+                # Use zero tensor as fallback
+                warnings.warn(
+                    f'Sonar image not found: {sonar_path}. '
+                    f'Using zero tensor as fallback. Error: {e}')
+                # Get target size from RGB image
+                if 'img' in results:
+                    h, w = results['img'].shape[:2]
+                    sonar_img = np.zeros((h, w, 3), dtype=np.uint8)
+                else:
+                    # Default size if RGB not loaded yet
+                    sonar_img = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            else:
+                raise FileNotFoundError(
+                    f'Failed to load sonar image: {sonar_path}. Error: {e}')
+
+        if self.to_float32:
+            sonar_img = sonar_img.astype(np.float32)
+
+        # Store sonar image and metadata
+        results['sonar_img'] = sonar_img
+        results['sonar_path'] = sonar_path
+        results['sonar_shape'] = sonar_img.shape[:2]
+
+        return results
+
+    def __repr__(self) -> str:
+        repr_str = self.__class__.__name__
+        repr_str += f"(sonar_data_root='{self.sonar_data_root}', "
+        repr_str += f'to_float32={self.to_float32}, '
+        repr_str += f"color_type='{self.color_type}', "
+        repr_str += f"imdecode_backend='{self.imdecode_backend}', "
+        repr_str += f"use_zero_fallback={self.use_zero_fallback})"
         return repr_str

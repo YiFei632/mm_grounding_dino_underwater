@@ -234,8 +234,21 @@ class CocoMetric(BaseMetric):
             labels = result['labels']
             bboxes = result['bboxes']
             scores = result['scores']
+            
+            if len(labels) > 0:                                                                                                                                                                                      
+                max_label = int(labels.max())                                                                                                                                                                        
+                print(f"[DEBUG] Image {image_id}: labels range [0, {max_label}], cat_ids length: {len(self.cat_ids)}")                                                                                               
+                if max_label >= len(self.cat_ids):                                                                                                                                                                   
+                    print(f"[ERROR] Label {max_label} exceeds cat_ids range! Labels: {labels.tolist()}")
+            
             # bbox results
             for i, label in enumerate(labels):
+                # Skip invalid labels
+                if label >= len(self.cat_ids):
+                    print(f"[WARNING] Skipping invalid label {label} (>= {len(self.cat_ids)}) "
+                          f"for image {image_id}, bbox index {i}")
+                    continue
+
                 data = dict()
                 data['image_id'] = image_id
                 data['bbox'] = self.xyxy2xywh(bboxes[i])
@@ -250,6 +263,12 @@ class CocoMetric(BaseMetric):
             masks = result['masks']
             mask_scores = result.get('mask_scores', scores)
             for i, label in enumerate(labels):
+                # Skip invalid labels
+                if label >= len(self.cat_ids):
+                    print(f"[WARNING] Skipping invalid label {label} (>= {len(self.cat_ids)}) "
+                          f"for image {image_id}, mask index {i}")
+                    continue
+
                 data = dict()
                 data['image_id'] = image_id
                 data['bbox'] = self.xyxy2xywh(bboxes[i])

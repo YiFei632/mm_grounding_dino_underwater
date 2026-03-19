@@ -122,3 +122,6 @@ work_dirs/
 *.py~
 *.sh~
 *.safetensors
+*.bin
+*.h5
+*.msgpack

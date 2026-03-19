@@ -16,6 +16,7 @@ from mmcv.transforms import RandomFlip as MMCV_RandomFlip
 from mmcv.transforms import Resize as MMCV_Resize
 from mmcv.transforms.utils import avoid_cache_randomness, cache_randomness
 from mmengine.dataset import BaseDataset
+from mmengine.registry import TRANSFORMS as MMENGINE_TRANSFORMS
 from mmengine.utils import is_str
 from numpy import random
 
@@ -211,6 +212,24 @@ class Resize(MMCV_Resize):
             results['homography_matrix'] = homography_matrix @ results[
                 'homography_matrix']
 
+    def _resize_sonar(self, results: dict) -> None:
+        """Resize sonar image with ``results['scale']``."""
+        if results.get('sonar_img', None) is not None:
+            sonar_img = results['sonar_img']
+            # Check if sonar image is valid
+            if sonar_img.size == 0 or sonar_img.shape[0] == 0 or sonar_img.shape[1] == 0:
+                # Skip resize if image is empty
+                return
+            sonar_img, w_scale, h_scale = mmcv.imresize(
+                sonar_img,
+                results['scale'],
+                interpolation=self.interpolation,
+                return_scale=True,
+                backend=self.backend)
+            results['sonar_img'] = sonar_img
+            # Update sonar_shape
+            results['sonar_shape'] = sonar_img.shape[:2]
+
     @autocast_box_type()
     def transform(self, results: dict) -> dict:
         """Transform function to resize images, bounding boxes and semantic
@@ -232,6 +251,7 @@ class Resize(MMCV_Resize):
         self._resize_bboxes(results)
         self._resize_masks(results)
         self._resize_seg(results)
+        self._resize_sonar(results)
         self._record_homography_matrix(results)
         return results
 
@@ -247,6 +267,7 @@ class Resize(MMCV_Resize):
 
 
 @TRANSFORMS.register_module()
+@MMENGINE_TRANSFORMS.register_module()
 class FixScaleResize(Resize):
     """Compared to Resize, FixScaleResize fixes the scaling issue when
     `keep_ratio=true`."""
@@ -591,6 +612,11 @@ class RandomFlip(MMCV_RandomFlip):
         if results.get('gt_seg_map', None) is not None:
             results['gt_seg_map'] = mmcv.imflip(
                 results['gt_seg_map'], direction=results['flip_direction'])
+
+        # flip sonar image
+        if results.get('sonar_img', None) is not None:
+            results['sonar_img'] = mmcv.imflip(
+                results['sonar_img'], direction=results['flip_direction'])
 
         # record homography matrix for flip
         self._record_homography_matrix(results)
@@ -950,6 +976,21 @@ class RandomCrop(BaseTransform):
         if results.get('gt_seg_map', None) is not None:
             results['gt_seg_map'] = results['gt_seg_map'][crop_y1:crop_y2,
                                                           crop_x1:crop_x2]
+
+        # crop sonar image
+        if results.get('sonar_img', None) is not None:
+            sonar_cropped = results['sonar_img'][crop_y1:crop_y2,
+                                                  crop_x1:crop_x2, ...]
+            # Validate cropped sonar image
+            if sonar_cropped.size > 0 and sonar_cropped.shape[0] > 0 and sonar_cropped.shape[1] > 0:
+                results['sonar_img'] = sonar_cropped
+                results['sonar_shape'] = sonar_cropped.shape[:2]
+            else:
+                # If sonar crop is invalid, create a zero array with the same shape as cropped img
+                # This shouldn't happen if img crop is valid, but just in case
+                img_shape = results['img'].shape
+                results['sonar_img'] = np.zeros(img_shape, dtype=results['sonar_img'].dtype)
+                results['sonar_shape'] = img_shape[:2]
 
         return results
 

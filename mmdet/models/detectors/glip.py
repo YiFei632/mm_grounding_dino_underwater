@@ -13,41 +13,58 @@ from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
 from .single_stage import SingleStageDetector
 
 
-def find_noun_phrases(caption: str) -> list:
-    """Find noun phrases in a caption using nltk.
-    Args:
-        caption (str): The caption to analyze.
+# def find_noun_phrases(caption: str) -> list:
+#     """Find noun phrases in a caption using nltk.
+#     Args:
+#         caption (str): The caption to analyze.
 
-    Returns:
-        list: List of noun phrases found in the caption.
+#     Returns:
+#         list: List of noun phrases found in the caption.
 
-    Examples:
-        >>> caption = 'There is two cat and a remote in the picture'
-        >>> find_noun_phrases(caption) # ['cat', 'a remote', 'the picture']
-    """
-    try:
-        import nltk
-        nltk.download('punkt', download_dir='~/nltk_data')
-        nltk.download('averaged_perceptron_tagger', download_dir='~/nltk_data')
-    except ImportError:
-        raise RuntimeError('nltk is not installed, please install it by: '
-                           'pip install nltk.')
+#     Examples:
+#         >>> caption = 'There is two cat and a remote in the picture'
+#         >>> find_noun_phrases(caption) # ['cat', 'a remote', 'the picture']
+#     """
+#     try:
+#         import nltk
+#         # 使用 quiet=True 避免输出，并且只在数据不存在时下载
+#         nltk.download('punkt', download_dir='~/nltk_data', quiet=True)
+#         nltk.download('averaged_perceptron_tagger', download_dir='~/nltk_data', quiet=True)
+#     except ImportError:
+#         raise RuntimeError('nltk is not installed, please install it by: '
+#                            'pip install nltk.')
 
-    caption = caption.lower()
-    tokens = nltk.word_tokenize(caption)
-    pos_tags = nltk.pos_tag(tokens)
+#     caption = caption.lower()
+#     tokens = nltk.word_tokenize(caption)
+#     pos_tags = nltk.pos_tag(tokens)
 
-    grammar = 'NP: {<DT>?<JJ.*>*<NN.*>+}'
-    cp = nltk.RegexpParser(grammar)
-    result = cp.parse(pos_tags)
+#     grammar = 'NP: {<DT>?<JJ.*>*<NN.*>+}'
+#     cp = nltk.RegexpParser(grammar)
+#     result = cp.parse(pos_tags)
 
-    noun_phrases = []
-    for subtree in result.subtrees():
-        if subtree.label() == 'NP':
-            noun_phrases.append(' '.join(t[0] for t in subtree.leaves()))
+#     noun_phrases = []
+#     for subtree in result.subtrees():
+#         if subtree.label() == 'NP':
+#             noun_phrases.append(' '.join(t[0] for t in subtree.leaves()))
 
-    return noun_phrases
+#     return noun_phrases
 
+def find_noun_phrases(caption: str) -> list:                                                                                                                                                                 
+    """使用spaCy查找名词短语"""                                                                                                                                                                              
+    try:                                                                                                                                                                                                     
+        import spacy                                                                                                                                                                                         
+        # 加载英文模型                                                                                                                                                                                       
+        nlp = spacy.load('en_core_web_sm')                                                                                                                                                                   
+    except ImportError:                                                                                                                                                                                      
+        raise RuntimeError('spacy is not installed, please install it by: '                                                                                                                                  
+                        'pip install spacy && python -m spacy download en_core_web_sm')                                                                                                                     
+    except OSError:                                                                                                                                                                                          
+        raise RuntimeError('spaCy model not found. Please run: '                                                                                                                                             
+                        'python -m spacy download en_core_web_sm')                                                                                                                                          
+                                                                                                                                                                                                            
+    doc = nlp(caption.lower())                                                                                                                                                                               
+    noun_phrases = [chunk.text for chunk in doc.noun_chunks]                                                                                                                                                 
+    return noun_phrases 
 
 def remove_punctuation(text: str) -> str:
     """Remove punctuation from a text.
