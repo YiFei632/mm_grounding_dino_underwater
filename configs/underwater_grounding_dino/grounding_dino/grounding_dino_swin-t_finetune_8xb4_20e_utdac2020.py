@@ -1,6 +1,6 @@
 _base_ = 'grounding_dino_swin-t_pretrain_obj365.py'
 
-data_root = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Datasets/UTDAC2020/'
+data_root = '/media/fishyu/fish-14tb-2/YiFei/Dataset/UTDAC2020/'
 class_name = ('echinus', 'starfish', 'holothurian', 'scallop')
 num_classes = len(class_name)
 metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230)])
@@ -8,7 +8,7 @@ metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0
 model = dict(bbox_head=dict(num_classes=num_classes))
 
 train_pipeline = [
-    dict(type='LoadImageFromFile'),
+    dict(type='LoadImageFromFileWithLog'),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(type='RandomFlip', prob=0.5),
     dict(
@@ -45,8 +45,25 @@ train_pipeline = [
     dict(
         type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
-                   'scale_factor', 'flip', 'flip_direction', 'text',
+                   'scale_factor', 'flip', 'flip_direction', 
                    'custom_entities'))
+]
+
+test_pipeline = [
+    dict(
+        type='LoadImageFromFile', backend_args=None,
+        imdecode_backend='pillow'),
+    dict(
+        type='FixScaleResize',
+        scale=(800, 1333),
+        keep_ratio=True,
+        backend='pillow'),
+    dict(type='LoadAnnotations', with_bbox=True),
+    dict(
+        type='PackDetInputs',
+        meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
+                   'scale_factor', 'custom_entities',
+                   'tokens_positive'))
 ]
 
 train_dataloader = dict(
@@ -73,12 +90,12 @@ test_dataloader = val_dataloader
 val_evaluator = dict(ann_file=data_root + 'annotations/instances_val2017.json')
 test_evaluator = val_evaluator
 
-max_epoch = 24
+max_epoch = 2
 
 default_hooks = dict(
     checkpoint=dict(interval=1, max_keep_ckpts=1, save_best='auto'),
     logger=dict(type='LoggerHook', interval=5))
-train_cfg = dict(max_epochs=max_epoch, val_interval=1)
+train_cfg = dict(max_epochs=max_epoch, val_interval=2)
 
 param_scheduler = [
     dict(
@@ -99,4 +116,4 @@ optim_wrapper = dict(
             'language_model': dict(lr_mult=0.0)
         }))
 
-load_from = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Grounding_DINO/mmdetection/checkpoints/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth'  # noqa
+load_from = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/checkpoints/grounding_dino_swin-t_pretrain_obj365_goldg_grit9m_v3det_20231204_095047-b448804b.pth'  # noqa

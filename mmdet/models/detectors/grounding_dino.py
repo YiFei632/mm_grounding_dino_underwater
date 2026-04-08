@@ -220,6 +220,15 @@ class GroundingDINO(DINO):
             else:
                 if not original_caption.endswith('.'):
                     original_caption = original_caption + self._special_tokens
+
+                # Convert dict format to list format if needed
+                # Dict format: {0: [[start, end]], 1: [[start, end]], ...}
+                # List format: [[[start, end]], [[start, end]], ...]
+                if isinstance(tokens_positive, dict):
+                    # Sort by keys to maintain order
+                    sorted_keys = sorted(tokens_positive.keys())
+                    tokens_positive = [tokens_positive[k] for k in sorted_keys]
+
                 tokenized = self.language_model.tokenizer(
                     [original_caption],
                     padding='max_length'

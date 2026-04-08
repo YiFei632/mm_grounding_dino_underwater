@@ -40,6 +40,13 @@ def check_for_positive_overflow(gt_bboxes, gt_labels, text, tokenizer,
     length = 0
 
     for index, label in enumerate(positive_label_list):
+        # Debug: Check if label exists in text dict
+        if str(label) not in text:
+            print(f"WARNING: Label {label} not found in text dict!")
+            print(f"  Available keys in text: {list(text.keys())}")
+            print(f"  All labels in gt_labels: {np.unique(gt_labels).tolist()}")
+            print(f"  Skipping this label...")
+            continue
 
         label_text = clean_name(text[str(label)]) + '. '
 
@@ -75,6 +82,13 @@ def generate_senetence_given_labels(positive_label_list, negative_label_list,
 
     label_remap_dict = {}
     for index, label in enumerate(label_list):
+        # Debug: Check if label exists in text dict
+        if str(label) not in text:
+            print(f"WARNING in generate_senetence_given_labels: Label {label} (type: {type(label)}) not found in text dict!")
+            print(f"  Available keys in text: {list(text.keys())}")
+            print(f"  Positive labels: {positive_label_list}")
+            print(f"  Negative labels: {negative_label_list}")
+            continue
 
         start_index = len(pheso_caption)
 
@@ -157,6 +171,27 @@ class RandomSamplingNegPos(BaseTransform):
         else:
             text = results['text']
 
+        # Debug: Print info about text and gt_labels
+        if not isinstance(text, dict):
+            print(f"ERROR: text is not a dict! Type: {type(text)}, Value: {text}")
+        elif len(gt_labels) > 0:
+            max_label = int(np.max(gt_labels))
+            min_label = int(np.min(gt_labels))
+            unique_labels = np.unique(gt_labels).tolist()
+            text_keys = list(text.keys()) if isinstance(text, dict) else []
+
+            # Check if all labels exist in text
+            missing_labels = [label for label in unique_labels if str(label) not in text]
+            if missing_labels:
+                print(f"\n{'='*80}")
+                print(f"ERROR: Found labels that don't exist in text dict!")
+                print(f"  Missing labels: {missing_labels}")
+                print(f"  All unique labels in gt: {unique_labels}")
+                print(f"  Text dict keys: {text_keys}")
+                print(f"  Image ID: {results.get('img_id', 'N/A')}")
+                print(f"  Image path: {results.get('img_path', 'N/A')}")
+                print(f"{'='*80}\n")
+
         original_box_num = len(gt_labels)
         # If the category name is in the format of 'a/b' (in object365),
         # we randomly select one of them.
@@ -235,6 +270,45 @@ class RandomSamplingNegPos(BaseTransform):
 
         results['text'] = pheso_caption
         results['tokens_positive'] = label_to_positions
+
+        return results
+
+
+@TRANSFORMS.register_module()
+class LoadClassNamesAsText(BaseTransform):
+    """Load class names as text dictionary.
+
+    Convert class names from list/tuple format to dictionary format
+    required by RandomSamplingNegPos transform.
+
+    Args:
+        classes (tuple or list, optional): Class names to use.
+            If None, will use classes from results['text'].
+    """
+
+    def __init__(self, classes=None):
+        self.classes = classes
+
+    def transform(self, results: dict) -> dict:
+        """Transform function to convert class names to dictionary.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Result dict with text in dictionary format.
+        """
+        # Get class names from parameter or from results
+        if self.classes is not None:
+            class_names = self.classes
+        elif 'text' in results:
+            class_names = results['text']
+        else:
+            raise ValueError('No class names found in results or parameters')
+
+        # Convert to dictionary format: {'0': 'class1', '1': 'class2', ...}
+        text_dict = {str(i): name for i, name in enumerate(class_names)}
+        results['text'] = text_dict
 
         return results
 

@@ -421,6 +421,8 @@ class GroundingDINOHead(DINOHead):
             cls_score = convert_grounding_to_cls_scores(
                 logits=cls_score.sigmoid()[None],
                 positive_maps=[token_positive_maps])[0]
+            # Ensure max_per_img doesn't exceed actual number of elements
+            max_per_img = min(max_per_img, cls_score.view(-1).shape[0])
             scores, indexes = cls_score.view(-1).topk(max_per_img)
             num_classes = cls_score.shape[-1]
             det_labels = indexes % num_classes
@@ -429,6 +431,8 @@ class GroundingDINOHead(DINOHead):
         else:
             cls_score = cls_score.sigmoid()
             scores, _ = cls_score.max(-1)
+            # Ensure max_per_img doesn't exceed actual number of queries
+            max_per_img = min(max_per_img, scores.shape[0])
             scores, indexes = scores.topk(max_per_img)
             bbox_pred = bbox_pred[indexes]
             det_labels = scores.new_zeros(scores.shape, dtype=torch.long)

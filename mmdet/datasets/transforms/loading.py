@@ -19,6 +19,17 @@ from mmdet.structures.mask import BitmapMasks, PolygonMasks
 
 
 @TRANSFORMS.register_module()
+class LoadImageFromFileWithLog(LoadImageFromFile):
+    """Load image from file with logging."""
+
+    def transform(self, results: dict) -> dict:
+        """Transform function with logging."""
+        results = super().transform(results)
+        print(f"[DataLoader] Loaded image: {results.get('img_path', 'unknown')}")
+        return results
+
+
+@TRANSFORMS.register_module()
 class LoadImageFromNDArray(LoadImageFromFile):
     """Load an image from ``results['img']``.
 

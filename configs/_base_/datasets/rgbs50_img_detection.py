@@ -1,7 +1,7 @@
 # dataset settings
 dataset_type = 'CocoDataset'
-data_root = '/media/fishyu/6955024a-ed66-4a86-b94a-687c51c28306/fishyu/YiFei/Datasets/RGBS50_COCO/'
-class_name = ('ball_and_polyhedron', 'connected_polyhedron', 'fake_person', 'frustum', 'iron_ball', 'octahedron', 'uuv')
+data_root = '/media/fishyu/fish-14tb-2/YiFei/Dataset/RGBS50_image/'
+class_name = ('connected_ball', 'connected_polyhedron', 'fake_person', 'frustum', 'iron_ball', 'octahedron', 'uuv')
 num_classes = len(class_name)
 metainfo = dict(classes=class_name, palette=[(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (106, 0, 228),(0, 60, 100), (0, 80, 100)])
 

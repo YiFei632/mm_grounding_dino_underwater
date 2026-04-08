@@ -94,7 +94,7 @@ class ThirdGroundingDINO(GroundingDINO):
             bias=True)
         
         self.sonar_feat_map = nn.Linear(
-            2048,
+            1536,
             self.embed_dims,
             bias=True)
 
@@ -372,7 +372,7 @@ class ThirdGroundingDINO(GroundingDINO):
             sonar_feats = self.sonar_backbone(sonar_inputs)                                                                                                                                                                              
                                                                                                                                                                                                                                         
         # 处理sonar特征                                                                                                                                                                                                                  
-        if isinstance(sonar_feats, tuple):                                                                                                                                                                                               
+        if isinstance(sonar_feats, (tuple, list)):                                                                                                                                                                                               
             sonar_feat = sonar_feats[-1]                                                                                                                                                                                                 
         else:                                                                                                                                                                                                                            
             sonar_feat = sonar_feats                                                                                                                                                                                                     

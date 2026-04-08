@@ -1,9 +1,9 @@
 _base_ = [
-    '../../_base_/datasets/coco_detection.py',
+    '../../_base_/datasets/rgbs50_img_clip_detection.py',
     '../../_base_/schedules/schedule_1x.py', '../../_base_/default_runtime.py'
 ]
 pretrained = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/checkpoints/swin_tiny_patch4_window7_224.pth'  # noqa
-lang_model_name = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/bert-base-uncased'
+lang_model_name = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/clip-vit-base-patch32'
 
 model = dict(
     type='GroundingDINO',
@@ -17,14 +17,13 @@ model = dict(
         bgr_to_rgb=True,
         pad_mask=False,
     ),
-    language_model=dict(
-        type='BertModel',
-        name=lang_model_name,
-        max_tokens=256,
-        pad_to_max=False,
-        use_sub_sentence_represent=True,
-        special_tokens_list=['[CLS]', '[SEP]', '.', '?'],
-        add_pooling_layer=False,
+    language_model=dict(                                                                                                                                                                                         
+        type='CLIPModel',  # 新的类型                                                                                                                                                                        
+        name=lang_model_name,  # 或其他CLIP模型                                                                                                                                                   
+        max_tokens=77,  # CLIP的最大token长度是77                                                                                                                                                                
+        pad_to_max=False,                                                                                                                                                                                        
+        use_sub_sentence_represent=True,                                                                                                                                                                         
+        special_tokens_list=['<|startoftext|>', '<|endoftext|>', '.', '?'],                                                                                                                                      
     ),
     backbone=dict(
         type='SwinTransformer',
@@ -91,7 +90,7 @@ model = dict(
         num_feats=128, normalize=True, offset=0.0, temperature=20),
     bbox_head=dict(
         type='GroundingDINOHead',
-        num_classes=256,
+        num_classes=7,
         sync_cls_avg_factor=True,
         contrastive_cfg=dict(max_text_len=256, log_scale='auto', bias=True),
         loss_cls=dict(
@@ -121,6 +120,9 @@ model = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args=_base_.backend_args),
     dict(type='LoadAnnotations', with_bbox=True),
+    dict(type='LoadClassNamesAsText',
+         classes=('a photo of a ball and a polyhedron', 'a photo of two connected polyhedron', 'a photo of a fake person',
+                  'a photo of a frustum', 'a photo of an iron ball', 'a photo of an octahedron', 'a photo of an unmanned underwater vehicle')),
     dict(type='RandomFlip', prob=0.5),
     dict(
         type='RandomChoice',
@@ -163,7 +165,7 @@ train_pipeline = [
         type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
                    'scale_factor', 'flip', 'flip_direction',
-                   'custom_entities', 'tokens_positive', 'dataset_mode'))
+                   'custom_entities'))
 ]
 
 test_pipeline = [
@@ -176,39 +178,21 @@ test_pipeline = [
         keep_ratio=True,
         backend='pillow'),
     dict(type='LoadAnnotations', with_bbox=True),
+    dict(type='LoadClassNamesAsText',
+         classes=('a photo of a ball and a polyhedron', 'a photo of two connected polyhedron', 'a photo of a fake person',
+                  'a photo of a frustum', 'a photo of an iron ball', 'a photo of an octahedron', 'a photo of an unmanned underwater vehicle')),
+    dict(
+        type='RandomSamplingNegPos',
+        tokenizer_name=lang_model_name,
+        num_sample_negative=85,
+        max_tokens=256,
+        full_sampling_prob=1.0),  # 验证时使用所有类别
     dict(
         type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
-                   'scale_factor', 'custom_entities',
-                   'tokens_positive'))
+                   'scale_factor', 'flip', 'flip_direction',
+                   'custom_entities'))
 ]
-
-dataset_type = 'ODVGDataset'
-data_root = 'data/objects365v1/'
-
-coco_od_dataset = dict(
-    type=dataset_type,
-    data_root=data_root,
-    ann_file='o365v1_train_odvg.json',
-    label_map_file='o365v1_label_map.json',
-    data_prefix=dict(img='train/'),
-    filter_cfg=dict(filter_empty_gt=False),
-    pipeline=train_pipeline,
-    return_classes=True,
-    backend_args=None)
-
-train_dataloader = dict(
-    _delete_=True,
-    batch_size=4,
-    num_workers=4,
-    persistent_workers=True,
-    sampler=dict(type='DefaultSampler', shuffle=True),
-    batch_sampler=dict(type='AspectRatioBatchSampler'),
-    dataset=dict(type='ConcatDataset', datasets=[coco_od_dataset]))
-
-val_dataloader = dict(
-    dataset=dict(pipeline=test_pipeline, return_classes=True))
-test_dataloader = val_dataloader
 
 optim_wrapper = dict(
     _delete_=True,
@@ -224,7 +208,7 @@ optim_wrapper = dict(
         }))
 
 # learning policy
-max_epochs = 30
+max_epochs = 2
 param_scheduler = [
     dict(type='LinearLR', start_factor=0.1, by_epoch=False, begin=0, end=1000),
     dict(
@@ -237,11 +221,29 @@ param_scheduler = [
 ]
 
 train_cfg = dict(
-    type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=1)
+    type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=2)
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # USER SHOULD NOT CHANGE ITS VALUES.
 # base_batch_size = (16 GPUs) x (2 samples per GPU)
 auto_scale_lr = dict(base_batch_size=64)
 
-default_hooks = dict(visualization=dict(type='GroundingVisualizationHook'))
+default_hooks = dict(visualization=dict(type='GroundingVisualizationHook', draw=False))
+
+# 更新 train_dataloader 以使用正确的 pipeline
+train_dataloader = dict(
+    dataset=dict(
+        pipeline=train_pipeline))
+
+# 更新 val_dataloader 以支持 Grounding DINO 验证
+val_dataloader = dict(
+    dataset=dict(
+        pipeline=test_pipeline))
+
+test_dataloader = val_dataloader
+
+model_wrapper_cfg = dict(                                                                                                                                                                                    
+    type='MMDistributedDataParallel',                                                                                                                                                                        
+    find_unused_parameters=True,
+    static_graph=True                                                                                                                                                                           
+)

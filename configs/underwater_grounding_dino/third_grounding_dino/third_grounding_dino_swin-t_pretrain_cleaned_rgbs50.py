@@ -2,11 +2,17 @@ _base_ = [
     '../../_base_/datasets/coco_detection.py',
     '../../_base_/schedules/schedule_1x.py', '../../_base_/default_runtime.py'
 ]
+
+# Custom imports to ensure all transforms are registered
+custom_imports = dict(
+    imports=['mmdet.datasets', 'mmdet.models'],
+    allow_failed_imports=False)
+
 pretrained = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/checkpoints/swin_tiny_patch4_window7_224.pth'  # noqa
 lang_model_name = '/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/bert-base-uncased'
 
 model = dict(
-    type='GroundingDINO',
+    type='ThirdGroundingDINO',
     num_queries=900,
     with_box_refine=True,
     as_two_stage=True,
@@ -44,6 +50,17 @@ model = dict(
         convert_weights=True,
         frozen_stages=-1,
         init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
+    sonar_backbone=dict(                                                                                                                                                                                                             
+        type='ResNet',                                                                                                                                                                                                               
+        depth=50,                                                                                                                                                                                                                    
+        num_stages=4,                                                                                                                                                                                                                
+        out_indices=(3,),  # 只要最后一层特征                                                                                                                                                                                        
+        frozen_stages=1,                                                                                                                                                                                                             
+        norm_cfg=dict(type='BN', requires_grad=True),                                                                                                                                                                                
+        norm_eval=True,                                                                                                                                                                                                              
+        style='pytorch',                                                                                                                                                                                                             
+        init_cfg=dict(type='Pretrained', checkpoint='/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/checkpoints/resnet50-0676ba61.pth')                                                                                                                                                        
+    ),
     neck=dict(
         type='ChannelMapper',
         in_channels=[192, 384, 768],
@@ -54,6 +71,7 @@ model = dict(
         norm_cfg=dict(type='GN', num_groups=32),
         num_outs=4),
     encoder=dict(
+        type='ThirdGroundingDinoTransformerEncoder',
         num_layers=6,
         num_cp=6,
         # visual layer config
@@ -91,7 +109,7 @@ model = dict(
         num_feats=128, normalize=True, offset=0.0, temperature=20),
     bbox_head=dict(
         type='GroundingDINOHead',
-        num_classes=256,
+        num_classes=7,  # RGBS50有7个类别
         sync_cls_avg_factor=True,
         contrastive_cfg=dict(max_text_len=256, log_scale='auto', bias=True),
         loss_cls=dict(
@@ -99,7 +117,7 @@ model = dict(
             use_sigmoid=True,
             gamma=2.0,
             alpha=0.25,
-            loss_weight=1.0),  # 2.0 in DeformDETR
+            loss_weight=1.0),
         loss_bbox=dict(type='L1Loss', loss_weight=5.0)),
     dn_cfg=dict(  # TODO: Move to model.train_cfg ?
         label_noise_scale=0.5,
@@ -118,8 +136,12 @@ model = dict(
     test_cfg=dict(max_per_img=300))
 
 # dataset settings
+# 声纳数据集根目录
+sonar_data_root = '/media/fishyu/fish-14tb-2/YiFei/Dataset/RGBS50_sonar'
+
 train_pipeline = [
-    dict(type='LoadImageFromFile', backend_args=_base_.backend_args),
+    dict(type='LoadImageFromFile', backend_args=None),
+    dict(type='LoadSonarImage', sonar_data_root=sonar_data_root, use_zero_fallback=True),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(type='RandomFlip', prob=0.5),
     dict(
@@ -136,8 +158,6 @@ train_pipeline = [
             [
                 dict(
                     type='RandomChoiceResize',
-                    # The radio of all image in train dataset < 7
-                    # follow the original implement
                     scales=[(400, 4200), (500, 4200), (600, 4200)],
                     keep_ratio=True),
                 dict(
@@ -155,93 +175,122 @@ train_pipeline = [
         ]),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1e-2, 1e-2)),
     dict(
-        type='RandomSamplingNegPos',
-        tokenizer_name=lang_model_name,
-        num_sample_negative=85,
-        max_tokens=256),
-    dict(
         type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
                    'scale_factor', 'flip', 'flip_direction',
-                   'custom_entities', 'tokens_positive', 'dataset_mode'))
+                   'sonar_path', 'sonar_shape'))
 ]
 
 test_pipeline = [
-    dict(
-        type='LoadImageFromFile', backend_args=None,
-        imdecode_backend='pillow'),
-    dict(
-        type='FixScaleResize',
-        scale=(800, 1333),
-        keep_ratio=True,
-        backend='pillow'),
+    dict(type='LoadImageFromFile', backend_args=None, imdecode_backend='pillow'),
+    dict(type='LoadSonarImage', sonar_data_root=sonar_data_root, use_zero_fallback=True),
+    dict(type='FixScaleResize', scale=(800, 1333), keep_ratio=True, backend='pillow'),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(
         type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
-                   'scale_factor', 'custom_entities',
-                   'tokens_positive'))
+                   'scale_factor', 'sonar_path', 'sonar_shape'))
 ]
 
-dataset_type = 'ODVGDataset'
-data_root = 'data/objects365v1/'
+dataset_type = 'CocoDataset'
+# RGB数据集根目录
+data_root = '/media/fishyu/fish-14tb-2/YiFei/Dataset/RGBS50_image/'
 
-coco_od_dataset = dict(
+# RGBS50数据集类别定义（与数据集annotation保持一致）
+metainfo = {
+    'classes': ('connected_ball', 'connected_polyhedron', 'fake_person', 'frustum',
+                'iron_ball', 'octahedron', 'uuv'),
+    'palette': [(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230),
+                (106, 0, 228), (0, 60, 100), (0, 80, 100)]
+}
+
+# 训练数据集
+train_dataset = dict(
     type=dataset_type,
     data_root=data_root,
-    ann_file='o365v1_train_odvg.json',
-    label_map_file='o365v1_label_map.json',
-    data_prefix=dict(img='train/'),
+    metainfo=metainfo,
+    ann_file='instances_train.json',
+    data_prefix=dict(img='train_images/'),
     filter_cfg=dict(filter_empty_gt=False),
     pipeline=train_pipeline,
     return_classes=True,
     backend_args=None)
 
+# 验证数据集
+val_dataset = dict(
+    type=dataset_type,
+    data_root=data_root,
+    metainfo=metainfo,
+    ann_file='instances_val.json',
+    data_prefix=dict(img='val_images/'),
+    pipeline=test_pipeline,
+    return_classes=True,
+    backend_args=None)
+
 train_dataloader = dict(
     _delete_=True,
-    batch_size=4,
+    batch_size=2,  # 双图像输入，减小batch_size
     num_workers=4,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=dict(type='AspectRatioBatchSampler'),
-    dataset=dict(type='ConcatDataset', datasets=[coco_od_dataset]))
+    dataset=train_dataset)
 
 val_dataloader = dict(
-    dataset=dict(pipeline=test_pipeline, return_classes=True))
+    _delete_=True,
+    batch_size=1,
+    num_workers=2,
+    persistent_workers=True,
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    dataset=val_dataset)
+
 test_dataloader = val_dataloader
 
 optim_wrapper = dict(
     _delete_=True,
     type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=0.0004,
-                   weight_decay=0.0001),  # bs=16 0.0001
+    optimizer=dict(type='AdamW', lr=0.0001, weight_decay=0.0001),  # 降低学习率，因为batch_size更小
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(
         custom_keys={
             'absolute_pos_embed': dict(decay_mult=0.),
             'backbone': dict(lr_mult=0.1),
             'language_model': dict(lr_mult=0.1),
+            'sonar_backbone': dict(lr_mult=0.1),
         }))
 
 # learning policy
-max_epochs = 30
+max_epochs = 2  # 先行进行测试，训练两轮之后微调看效果
 param_scheduler = [
-    dict(type='LinearLR', start_factor=0.1, by_epoch=False, begin=0, end=1000),
+    dict(type='LinearLR', start_factor=0.1, by_epoch=False, begin=0, end=500),
     dict(
         type='MultiStepLR',
         begin=0,
         end=max_epochs,
         by_epoch=True,
-        milestones=[19, 26],
+        milestones=[35, 45],  # 调整milestone
         gamma=0.1)
 ]
 
 train_cfg = dict(
-    type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=1)
+    type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=2)  # 每5个epoch验证一次
+
+val_cfg = dict(type='ValLoop')
+test_cfg = dict(type='TestLoop')
+
+# 评估指标
+val_evaluator = dict(
+    type='CocoMetric',
+    ann_file=data_root + 'instances_val.json',
+    metric='bbox',
+    format_only=False,
+    backend_args=None)
+
+test_evaluator = val_evaluator
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # USER SHOULD NOT CHANGE ITS VALUES.
-# base_batch_size = (16 GPUs) x (2 samples per GPU)
-auto_scale_lr = dict(base_batch_size=64)
+# base_batch_size = (4 GPUs) x (2 samples per GPU)
+auto_scale_lr = dict(base_batch_size=8, enable=False)  # 关闭自动学习率缩放
 
 default_hooks = dict(visualization=dict(type='GroundingVisualizationHook'))
