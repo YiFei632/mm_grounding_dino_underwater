@@ -2,6 +2,7 @@
 from .accuracy import Accuracy, accuracy
 from .ae_loss import AssociativeEmbeddingLoss
 from .balanced_l1_loss import BalancedL1Loss, balanced_l1_loss
+from .contrastive_loss import ContrastiveLoss
 from .cross_entropy_loss import (CrossEntropyCustomLoss, CrossEntropyLoss,
                                  binary_cross_entropy, cross_entropy,
                                  mask_cross_entropy)
@@ -38,5 +39,6 @@ __all__ = [
     'QualityFocalLoss', 'DistributionFocalLoss', 'VarifocalLoss',
     'KnowledgeDistillationKLDivLoss', 'SeesawLoss', 'DiceLoss', 'EQLV2Loss',
     'MarginL2Loss', 'MultiPosCrossEntropyLoss', 'L2Loss', 'TripletLoss',
-    'DDQAuxLoss', 'CrossEntropyCustomLoss', 'FocalCustomLoss'
+    'DDQAuxLoss', 'CrossEntropyCustomLoss', 'FocalCustomLoss',
+    'ContrastiveLoss'
 ]

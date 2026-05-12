@@ -18,6 +18,9 @@ from .grounding_dino_layers import (GroundingDinoTransformerDecoder,
 from .third_grounding_dino_layers import (ThirdGroundingDinoTransformerDecoder,
                                           ThirdGroundingDinoTransformerDecoderLayer,
                                           ThirdGroundingDinoTransformerEncoder)
+from .sonarbind_layers import (SonarBindTransformerDecoderLayer,
+                               SonarBindTransformerEncoder,
+                               SonarBindTransformerDecoder)                                          
 from .mask2former_layers import (Mask2FormerTransformerDecoder,
                                  Mask2FormerTransformerDecoderLayer,
                                  Mask2FormerTransformerEncoder)
@@ -42,5 +45,7 @@ __all__ = [
     'GroundingDinoTransformerDecoderLayer', 'GroundingDinoTransformerEncoder',
     'GroundingDinoTransformerDecoder',
     'ThirdGroundingDinoTransformerDecoderLayer', 'ThirdGroundingDinoTransformerEncoder',
-    'ThirdGroundingDinoTransformerDecoder'
+    'ThirdGroundingDinoTransformerDecoder',
+    'SonarBindTransformerDecoderLayer', 'SonarBindTransformerEncoder',
+    'SonarBindTransformerDecoder'
 ]

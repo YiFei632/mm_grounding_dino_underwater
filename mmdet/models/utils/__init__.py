@@ -22,6 +22,7 @@ from .vlfuse_helper import BertEncoderLayer, VLFuse, permute_and_flatten
 from .wbf import weighted_boxes_fusion
 from .ccm import CategoricalCounting
 from .cgfe import CGFE, MultiScaleFeature
+from .fft_band0_filter import FFTBand0Filter
 
 __all__ = [
     'gaussian_radius', 'gen_gaussian_target', 'make_divisible',
@@ -36,5 +37,5 @@ __all__ = [
     'reweight_loss_dict', 'relative_coordinate_maps', 'aligned_bilinear',
     'unfold_wo_center', 'imrenormalize', 'VLFuse', 'permute_and_flatten',
     'BertEncoderLayer', 'align_tensor', 'weighted_boxes_fusion','CategoricalCounting',
-    'CGFE', 'MultiScaleFeature'
+    'CGFE', 'MultiScaleFeature', 'FFTBand0Filter'
 ]

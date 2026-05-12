@@ -9,14 +9,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from mmengine.runner.amp import autocast
 from torch import Tensor
+# from torch.profiler import ProfilerActivity, profile, record_function
 
 from mmdet.registry import MODELS
 from mmdet.structures import OptSampleList, SampleList
 from mmdet.utils import ConfigType
 from ..layers import SinePositionalEncoding
-from ..layers.transformer.third_grounding_dino_layers import (
-    ThirdGroundingDinoTransformerDecoder, ThirdGroundingDinoTransformerEncoder)
-from .grounding_dino import GroundingDINO
+from ..layers.transformer.sonarbind_layers import (
+    SonarBindTransformerDecoder, SonarBindTransformerEncoder)
+from ..losses import ContrastiveLoss
+from .third_grounding_dino import ThirdGroundingDINO
 from .glip import (create_positive_map, create_positive_map_label_to_token,
                    run_ner)
 
@@ -43,8 +45,17 @@ def chunks(lst: list, n: int) -> list:
 
 
 @MODELS.register_module()
-class ThirdGroundingDINO(GroundingDINO):
-    """Implementation of `Grounding DINO: Marrying DINO with Grounded Pre-
+class SonarBindLGANet(ThirdGroundingDINO):
+    """SonarBind variant that uses LGANet as the sonar backbone.
+
+    Identical to SonarBind except that ``sonar_feat_channels`` is exposed as
+    an explicit constructor argument so that the projection layer
+    ``sonar_feat_map`` can be sized correctly for backbones whose final-stage
+    output channel count differs from ResNet-50's 2048 (e.g. LGANet outputs
+    512 channels at P5).
+
+    Original class: SonarBind.
+    See also: `Grounding DINO: Marrying DINO with Grounded Pre-
     Training for Open-Set Object Detection.
 
     <https://arxiv.org/abs/2303.05499>`_
@@ -58,21 +69,34 @@ class ThirdGroundingDINO(GroundingDINO):
                  sonar_backbone,
                  *args,
                  use_autocast=False,
+                 sonar_feat_channels=512,
+                 loss_sonar_image_weight=1.0,
+                 loss_sonar_text_weight=1.0,
+                 contrastive_temperature=0.07,
+                 learnable_temperature=False,
                  **kwargs) -> None:
 
         self.language_model_cfg = language_model
         self.sonar_backbone_cfg = sonar_backbone
         self._special_tokens = '. '
         self.use_autocast = use_autocast
+        self.sonar_feat_channels = sonar_feat_channels
+
+        # Contrastive loss configuration
+        self.loss_sonar_image_weight = loss_sonar_image_weight
+        self.loss_sonar_text_weight = loss_sonar_text_weight
+        self.contrastive_temperature = contrastive_temperature
+        self.learnable_temperature = learnable_temperature
+
         # 将language_model传递给父类
-        super().__init__(language_model=language_model, *args, **kwargs)
+        super().__init__(language_model=language_model, sonar_backbone=sonar_backbone, *args, **kwargs)
 
     def _init_layers(self) -> None:
         """Initialize layers except for backbone, neck and bbox_head."""
         self.positional_encoding = SinePositionalEncoding(
             **self.positional_encoding)
-        self.encoder = ThirdGroundingDinoTransformerEncoder(**self.encoder)
-        self.decoder = ThirdGroundingDinoTransformerDecoder(**self.decoder)
+        self.encoder = SonarBindTransformerEncoder(**self.encoder)
+        self.decoder = SonarBindTransformerDecoder(**self.decoder)
         self.embed_dims = self.encoder.embed_dims
         self.query_embedding = nn.Embedding(self.num_queries, self.embed_dims)
         num_feats = self.positional_encoding.num_feats
@@ -94,9 +118,15 @@ class ThirdGroundingDINO(GroundingDINO):
             bias=True)
         
         self.sonar_feat_map = nn.Linear(
-            2048,  # ResNet50最后一层输出通道数
+            self.sonar_feat_channels,
             self.embed_dims,
             bias=True)
+
+        # Contrastive loss module for multi-modal alignment
+        self.contrastive_loss_fn = ContrastiveLoss(
+            temperature=self.contrastive_temperature,
+            learnable_temperature=self.learnable_temperature
+        )
 
     def init_weights(self) -> None:
         """Initialize weights for Transformer and other components."""
@@ -324,42 +354,52 @@ class ThirdGroundingDINO(GroundingDINO):
                                                                                                                                                                                                                                         
         # 2. 提取并处理sonar特征
         batch_size = mlvl_feats[0].size(0)
+        device = mlvl_feats[0].device
 
-        # 获取目标尺寸（与 RGB 图像预处理后的尺寸一致）
-        batch_input_shape = batch_data_samples[0].batch_input_shape
-        target_h, target_w = batch_input_shape
+        # 声呐图像固定 resize 到 224×224，与 RGB backbone 预训练尺寸对齐
+        SONAR_SIZE = (224, 224)
+
+        # ImageNet mean/std（与 RGB DetDataPreprocessor 保持一致）
+        # mean: [123.675, 116.28, 103.53] / 255  std: [58.395, 57.12, 57.375] / 255
+        sonar_mean = torch.tensor([0.485, 0.456, 0.406],
+                                  dtype=torch.float32, device=device).view(3, 1, 1)
+        sonar_std  = torch.tensor([0.229, 0.224, 0.225],
+                                  dtype=torch.float32, device=device).view(3, 1, 1)
 
         # 提取并预处理sonar图像
         sonar_imgs_list = []
         for data_samples in batch_data_samples:
-            # 检查是否有声纳图像
             if not hasattr(data_samples, 'sonar_img') or data_samples.sonar_img is None:
-                # 如果没有声纳图像，创建一个与 RGB 图像相同尺寸的零张量
-                # 使用 mlvl_feats 的 device 确保在正确的设备上
-                device = mlvl_feats[0].device
-                sonar_img = torch.zeros((3, target_h, target_w), dtype=torch.float32, device=device)
+                # fallback: 全零张量（已归一化空间）
+                sonar_img = torch.zeros(
+                    (3, *SONAR_SIZE), dtype=torch.float32, device=device)
             else:
                 sonar_img = data_samples.sonar_img
-                # 确保在正确的设备上
                 if not isinstance(sonar_img, torch.Tensor):
                     sonar_img = torch.from_numpy(sonar_img)
-                if sonar_img.device != mlvl_feats[0].device:
-                    sonar_img = sonar_img.to(mlvl_feats[0].device)
+                if sonar_img.device != device:
+                    sonar_img = sonar_img.to(device)
 
-                # 转换为 float32
+                # uint8 → float32
                 if sonar_img.dtype == torch.uint8:
                     sonar_img = sonar_img.float()
-                # 归一化到 [0, 1]（如果还没有归一化）
+
+                # [0, 255] → [0, 1]
                 if sonar_img.max() > 1.0:
                     sonar_img = sonar_img / 255.0
-                # Resize 到目标尺寸
-                if sonar_img.shape[1:] != (target_h, target_w):
+
+                # Resize 到 224×224
+                if sonar_img.shape[1:] != SONAR_SIZE:
                     sonar_img = F.interpolate(
                         sonar_img.unsqueeze(0),
-                        size=(target_h, target_w),
+                        size=SONAR_SIZE,
                         mode='bilinear',
-                        align_corners=False
+                        align_corners=False,
                     ).squeeze(0)
+
+                # ImageNet 归一化：(x - mean) / std
+                sonar_img = (sonar_img - sonar_mean) / sonar_std
+
             sonar_imgs_list.append(sonar_img)
 
         sonar_inputs = torch.stack(sonar_imgs_list)
@@ -447,7 +487,7 @@ class ThirdGroundingDINO(GroundingDINO):
                         level_start_index: Tensor, valid_ratios: Tensor,
                         text_dict: Dict) -> Dict:
         text_token_mask = text_dict['text_token_mask']
-        memory, memory_text = self.encoder(
+        memory, memory_sonar, memory_text = self.encoder(
             query=feat,
             query_sonar=sonar_feat,
             query_pos=feat_pos,
@@ -464,6 +504,8 @@ class ThirdGroundingDINO(GroundingDINO):
             text_self_attention_masks=text_dict['masks'])
         encoder_outputs_dict = dict(
             memory=memory,
+            memory_sonar=memory_sonar,
+            memory_sonar_mask=sonar_mask,
             memory_mask=feat_mask,
             spatial_shapes=spatial_shapes,
             memory_text=memory_text,
@@ -477,6 +519,8 @@ class ThirdGroundingDINO(GroundingDINO):
         spatial_shapes: Tensor,
         memory_text: Tensor,
         text_token_mask: Tensor,
+        memory_sonar: Tensor = None,
+        memory_sonar_mask: Tensor = None,
         batch_data_samples: OptSampleList = None,
     ) -> Tuple[Dict]:
         bs, _, c = memory.shape
@@ -539,30 +583,149 @@ class ThirdGroundingDINO(GroundingDINO):
         # append text_feats to head_inputs_dict
         head_inputs_dict['memory_text'] = memory_text
         head_inputs_dict['text_token_mask'] = text_token_mask
+        # append sonar_feats to head_inputs_dict (sonar不进decoder，与memory_text对称保存)
+        head_inputs_dict['memory_sonar'] = memory_sonar
+        head_inputs_dict['memory_sonar_mask'] = memory_sonar_mask
+        head_inputs_dict['memory'] = memory                                                                                                                                                                      
+        head_inputs_dict['memory_mask'] = memory_mask                                                                                                                                                            
+        head_inputs_dict['spatial_shapes'] = spatial_shapes
         return decoder_inputs_dict, head_inputs_dict
+
+    def _compute_contrastive_losses(self, head_inputs_dict: Dict) -> Dict:
+        """Compute contrastive losses between sonar and other modalities.
+
+        This method implements CLIP-style contrastive learning to align
+        sonar features with image and text features in a shared embedding space.
+
+        Args:
+            head_inputs_dict (Dict): Dictionary containing:
+                - memory_sonar: Sonar features from encoder, shape (bs, num_sonar_tokens, dim)
+                - memory_sonar_mask: Sonar padding mask, shape (bs, num_sonar_tokens)
+                - memory: Image features from encoder, shape (bs, num_image_tokens, dim)
+                - memory_mask: Image padding mask, shape (bs, num_image_tokens)
+                - memory_text: Text features from encoder, shape (bs, num_text_tokens, dim)
+                - text_token_mask: Text token mask, shape (bs, num_text_tokens)
+
+        Returns:
+            Dict: Dictionary containing:
+                - loss_sonar_image: Contrastive loss between sonar and image
+                - loss_sonar_text: Contrastive loss between sonar and text
+        """
+        losses = {}
+
+        # Extract features and masks from head_inputs_dict
+        memory_sonar = head_inputs_dict.get('memory_sonar', None)
+        memory_sonar_mask = head_inputs_dict.get('memory_sonar_mask', None)
+        memory_image = head_inputs_dict.get('memory', None)
+        memory_image_mask = head_inputs_dict.get('memory_mask', None)
+        memory_text = head_inputs_dict.get('memory_text', None)
+        text_token_mask = head_inputs_dict.get('text_token_mask', None)
+
+        if memory_sonar is None:
+            # If no sonar features available, return zero losses
+            device = memory_image.device if memory_image is not None else torch.device('cpu')
+            return {
+                'loss_sonar_image': torch.tensor(0.0, device=device),
+                'loss_sonar_text': torch.tensor(0.0, device=device)
+            }
+
+        # Handle mask polarity:
+        # - memory_sonar_mask and memory_image_mask: True for padding, need to invert
+        # - text_token_mask: True for valid tokens, already correct polarity
+        sonar_mask_valid = ~memory_sonar_mask if memory_sonar_mask is not None else None
+        image_mask_valid = ~memory_image_mask if memory_image_mask is not None else None
+
+        # 1. Compute Sonar-Image contrastive loss
+        loss_sonar_image = self.contrastive_loss_fn(
+            memory_sonar, memory_image,
+            mask_a=sonar_mask_valid,
+            mask_b=image_mask_valid
+        )
+        losses['loss_sonar_image'] = loss_sonar_image * self.loss_sonar_image_weight
+
+        # 2. Compute Sonar-Text contrastive loss
+        loss_sonar_text = self.contrastive_loss_fn(
+            memory_sonar, memory_text,
+            mask_a=sonar_mask_valid,
+            mask_b=text_token_mask  # Already correct polarity (True for valid)
+        )
+        losses['loss_sonar_text'] = loss_sonar_text * self.loss_sonar_text_weight
+
+        return losses
+
+    # -------------------------------------------------------------------------
+    # Memory profiling helpers (disabled – uncomment + set SONARBIND_PROFILE=1
+    # to re-enable one-shot memory tracing)
+    # -------------------------------------------------------------------------
+    # _profile_done: bool = False  # class-level flag: only profile once
+
+    # @staticmethod
+    # def _get_nvml_mem_gb() -> str:
+    #     """Query GPU memory via NVML, matching what nvitop displays.
+    #
+    #     Uses v2 API (nvidia-ml-py >= 12.x) if available, falls back to v1.
+    #     - proc=X.XXX GB : per-process memory for THIS process (nvitop process row)
+    #     - dev_total=X.XXX GB : total device used memory (nvitop top bar)
+    #     """
+    #     try:
+    #         import pynvml, os
+    #         pynvml.nvmlInit()
+    #         cuda_dev = torch.cuda.current_device()
+    #         handle   = pynvml.nvmlDeviceGetHandleByIndex(cuda_dev)
+    #         pid      = os.getpid()
+    #
+    #         # Total device memory (= nvitop top progress bar)
+    #         mem_info  = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    #         dev_used  = mem_info.used / 1024 ** 3
+    #
+    #         # Per-process memory – prefer v2 API (more accurate on driver >= 520)
+    #         proc_used = float('nan')
+    #         try:
+    #             all_procs = pynvml.nvmlDeviceGetComputeRunningProcesses_v2(handle)
+    #         except AttributeError:
+    #             all_procs = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+    #         # Also include graphics processes (display server, etc.)
+    #         try:
+    #             all_procs = list(all_procs) + list(
+    #                 pynvml.nvmlDeviceGetGraphicsRunningProcesses(handle))
+    #         except Exception:
+    #             pass
+    #         for p in all_procs:
+    #             if p.pid == pid:
+    #                 if hasattr(p, 'usedGpuMemory') and p.usedGpuMemory:
+    #                     proc_used = p.usedGpuMemory / 1024 ** 3
+    #                 break
+    #
+    #         return (f'proc={proc_used:.3f}GB  dev_total={dev_used:.3f}GB')
+    #     except Exception as e:
+    #         return f'nvml_err({e})'
+
+    # @staticmethod
+    # def _mem_snapshot(tag: str) -> None:
+    #     torch.cuda.synchronize()
+    #     alloc = torch.cuda.memory_allocated() / 1024 ** 3
+    #     resv  = torch.cuda.memory_reserved()  / 1024 ** 3
+    #     nvml  = SonarBind._get_nvml_mem_gb()
+    #     print(f'[MEM] {tag:<45s}  '
+    #           f'torch_alloc={alloc:.3f}GB  torch_resv={resv:.3f}GB  '
+    #           f'nvml({nvml})')
 
     def loss(self, batch_inputs: Tensor,
              batch_data_samples: SampleList) -> Union[dict, list]:
-        # Get text prompts from data_samples or generate from class names
+        # -- text tokenisation --
         text_prompts = []
         for data_samples in batch_data_samples:
             if hasattr(data_samples, 'text') and data_samples.text is not None:
-                # If text is a tuple/list (classes), convert to string
                 if isinstance(data_samples.text, (tuple, list)):
                     clean_classes = [clean_label_name(c) for c in data_samples.text]
-                    text_prompt = '. '.join(clean_classes) + '.'
-                    text_prompts.append(text_prompt)
+                    text_prompts.append('. '.join(clean_classes) + '.')
                 else:
-                    # Use provided text prompt string
                     text_prompts.append(data_samples.text)
             else:
-                # Generate text prompt from class names in metainfo
                 if hasattr(data_samples, 'metainfo') and 'classes' in data_samples.metainfo:
                     classes = data_samples.metainfo['classes']
-                    # Clean class names and join them
                     clean_classes = [clean_label_name(c) for c in classes]
-                    text_prompt = '. '.join(clean_classes) + '.'
-                    text_prompts.append(text_prompt)
+                    text_prompts.append('. '.join(clean_classes) + '.')
                 else:
                     raise ValueError(
                         'data_samples must have either text attribute or '
@@ -597,11 +760,8 @@ class ThirdGroundingDINO(GroundingDINO):
             new_text_prompts = []
             positive_maps = []
             if len(set(text_prompts)) == 1:
-                # All the text prompts are the same,
-                # so there is no need to calculate them multiple times.
                 tokenized, caption_string, tokens_positive, _ = \
-                    self.get_tokens_and_prompts(
-                        text_prompts[0], True)
+                    self.get_tokens_and_prompts(text_prompts[0], True)
                 new_text_prompts = [caption_string] * len(batch_inputs)
                 for gt_label in gt_labels:
                     new_tokens_positive = [
@@ -613,8 +773,7 @@ class ThirdGroundingDINO(GroundingDINO):
             else:
                 for text_prompt, gt_label in zip(text_prompts, gt_labels):
                     tokenized, caption_string, tokens_positive, _ = \
-                        self.get_tokens_and_prompts(
-                            text_prompt, True)
+                        self.get_tokens_and_prompts(text_prompt, True)
                     new_tokens_positive = [
                         tokens_positive[label] for label in gt_label
                     ]
@@ -623,29 +782,138 @@ class ThirdGroundingDINO(GroundingDINO):
                     positive_maps.append(positive_map)
                     new_text_prompts.append(caption_string)
 
+        # -- BERT language model --
         text_dict = self.language_model(new_text_prompts)
         if self.text_feat_map is not None:
             text_dict['embedded'] = self.text_feat_map(text_dict['embedded'])
-
         for i, data_samples in enumerate(batch_data_samples):
             positive_map = positive_maps[i].to(
                 batch_inputs.device).bool().float()
             text_token_mask = text_dict['text_token_mask'][i]
             data_samples.gt_instances.positive_maps = positive_map
             data_samples.gt_instances.text_token_mask = \
-                text_token_mask.unsqueeze(0).repeat(
-                    len(positive_map), 1)
+                text_token_mask.unsqueeze(0).repeat(len(positive_map), 1)
+
+        # -- RGB backbone + neck --
         if self.use_autocast:
             with autocast(enabled=True):
                 visual_features = self.extract_feat(batch_inputs)
         else:
             visual_features = self.extract_feat(batch_inputs)
-        head_inputs_dict = self.forward_transformer(visual_features, text_dict,
-                                                    batch_data_samples)
 
+        # -- sonar backbone + pre_transformer --
+        encoder_inputs_dict, decoder_inputs_dict = self.pre_transformer(
+            visual_features, batch_data_samples)
+
+        # -- transformer encoder --
+        encoder_outputs_dict = self.forward_encoder(
+            **encoder_inputs_dict, text_dict=text_dict)
+
+        # -- pre_decoder (top-k selection + DN queries) --
+        tmp_dec_in, head_inputs_dict = self.pre_decoder(
+            **encoder_outputs_dict, batch_data_samples=batch_data_samples)
+        decoder_inputs_dict.update(tmp_dec_in)
+
+        # -- transformer decoder --
+        decoder_outputs_dict = self.forward_decoder(**decoder_inputs_dict)
+        head_inputs_dict.update(decoder_outputs_dict)
+
+        # -- contrastive loss --
+        contrastive_losses = self._compute_contrastive_losses(head_inputs_dict)
+
+        # -- detection loss --
+        bbox_head_inputs = {
+            k: v for k, v in head_inputs_dict.items()
+            if k not in ['memory_sonar', 'memory_sonar_mask',
+                         'memory', 'memory_mask', 'spatial_shapes']
+        }
         losses = self.bbox_head.loss(
-            **head_inputs_dict, batch_data_samples=batch_data_samples)
+            **bbox_head_inputs, batch_data_samples=batch_data_samples)
+
+        losses.update(contrastive_losses)
+
         return losses
+
+    # def train_step(self, data, optim_wrapper):
+    #     """Override train_step to monitor memory across the full training step.
+    #
+    #     Covers: data-preprocess → forward → backward → optimizer → zero_grad.
+    #     Activate with:  SONARBIND_PROFILE=1 python tools/train.py ...
+    #     """
+    #     import os
+    #     _do_profile = (os.environ.get('SONARBIND_PROFILE', '0') == '1'
+    #                    and not SonarBind._profile_done)
+    #
+    #     if not _do_profile:
+    #         # Normal fast path – identical to mmengine BaseModel.train_step
+    #         with optim_wrapper.optim_context(self):
+    #             data = self.data_preprocessor(data, True)
+    #             losses = self._run_forward(data, mode='loss')
+    #         parsed_losses, log_vars = self.parse_losses(losses)
+    #         optim_wrapper.update_params(parsed_losses)
+    #         return log_vars
+    #
+    #     # ── Profiling path ────────────────────────────────────────────────────
+    #     SonarBind._profile_done = True          # only profile one step
+    #     torch.cuda.reset_peak_memory_stats()
+    #     torch.cuda.synchronize()
+    #
+    #     sep = '=' * 70
+    #     print(f'\n{sep}')
+    #     print('[SonarBind Profiler] Full training-step memory trace')
+    #     print(sep)
+    #
+    #     def snap(tag):
+    #         torch.cuda.synchronize()
+    #         alloc = torch.cuda.memory_allocated()     / 1024 ** 3
+    #         resv  = torch.cuda.memory_reserved()      / 1024 ** 3
+    #         peak  = torch.cuda.max_memory_allocated()  / 1024 ** 3
+    #         nvml  = SonarBind._get_nvml_mem_gb()
+    #         print(f'[MEM] {tag:<50s}  '
+    #               f'torch_alloc={alloc:.3f}GB  torch_resv={resv:.3f}GB  '
+    #               f'torch_peak={peak:.3f}GB  nvml({nvml})')
+    #
+    #     snap('── baseline (before data preprocess) ──')
+    #
+    #     # ── Stage A: data preprocessor ───────────────────────────────────────
+    #     with record_function('A_data_preprocess'):
+    #         with optim_wrapper.optim_context(self):
+    #             data = self.data_preprocessor(data, True)
+    #     snap('A. after data_preprocessor')
+    #
+    #     # ── Stage B: forward pass (loss() is called inside) ──────────────────
+    #     with record_function('B_forward_loss'):
+    #         with optim_wrapper.optim_context(self):
+    #             losses = self._run_forward(data, mode='loss')
+    #     parsed_losses, log_vars = self.parse_losses(losses)
+    #     torch.cuda.synchronize()
+    #     snap('B. after forward pass  (loss computed)')
+    #
+    #     # ── Stage C: backward pass ────────────────────────────────────────────
+    #     with record_function('C_backward'):
+    #         optim_wrapper.backward(parsed_losses)
+    #     snap('C. after backward      (gradients allocated)')
+    #
+    #     # ── Stage D: gradient clip + optimizer step ───────────────────────────
+    #     with record_function('D_optimizer_step'):
+    #         optim_wrapper.step()
+    #     snap('D. after optimizer step (AdamW m1/m2 updated)')
+    #
+    #     # ── Stage E: zero_grad ────────────────────────────────────────────────
+    #     with record_function('E_zero_grad'):
+    #         optim_wrapper.zero_grad()
+    #     snap('E. after zero_grad     (gradients freed)')
+    #
+    #     torch.cuda.synchronize()
+    #     peak_total = torch.cuda.max_memory_allocated() / 1024 ** 3
+    #     resv_total = torch.cuda.max_memory_reserved()  / 1024 ** 3
+    #     nvml_total = SonarBind._get_nvml_mem_gb()
+    #     print(f'\n[MEM] ★ torch peak allocated (step) : {peak_total:.3f} GB')
+    #     print(f'[MEM] ★ torch peak reserved  (step) : {resv_total:.3f} GB')
+    #     print(f'[MEM] ★ nvml ({nvml_total})')
+    #     print(sep + '\n')
+    #
+    #     return log_vars
 
     def predict(self, batch_inputs, batch_data_samples, rescale: bool = True):
         text_prompts = []
@@ -733,10 +1001,14 @@ class ThirdGroundingDINO(GroundingDINO):
                 head_inputs_dict = self.forward_transformer(
                     copy.deepcopy(visual_feats),
                     text_dict,
-                    batch_data_samples)                                                                                                                                                                                         
+                    batch_data_samples)
+                _bbox_head_inputs = {                                                                                                                                                                                     
+                    k: v for k, v in head_inputs_dict.items()                                                                                                                                                             
+                    if k not in ['memory_sonar', 'memory_sonar_mask', 'memory', 'memory_mask', 'spatial_shapes']                                                                                                          
+                }                                                                                                                                                                                         
                                                                                                                                                                                                                                         
                 pred_instances = self.bbox_head.predict(
-                    **head_inputs_dict,
+                    **_bbox_head_inputs,
                     rescale=rescale,
                     batch_data_samples=batch_data_samples)[0]
 
@@ -779,10 +1051,15 @@ class ThirdGroundingDINO(GroundingDINO):
             head_inputs_dict = self.forward_transformer(
                 visual_feats,
                 text_dict,
-                batch_data_samples)                                                                                                                                                                                             
+                batch_data_samples)
+
+            _bbox_head_inputs = {                                                                                                                                                                                     
+                k: v for k, v in head_inputs_dict.items()                                                                                                                                                             
+                if k not in ['memory_sonar', 'memory_sonar_mask', 'memory', 'memory_mask', 'spatial_shapes']                                                                                                          
+            }                                                                                                                                                                                             
                                                                                                                                                                                                                                         
             results_list = self.bbox_head.predict(
-                **head_inputs_dict,
+                **_bbox_head_inputs,
                 rescale=rescale,
                 batch_data_samples=batch_data_samples)
 

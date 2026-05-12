@@ -62,6 +62,12 @@ from .dq_detr import DQDETR
 from .dqdino import DQDINO
 from .ucf_dino import UCFDINO, GatedFusion
 from .third_grounding_dino import ThirdGroundingDINO
+from .sonarbind import SonarBind
+from .clip_sonarbind import CLIPSonarBind
+from .clip_image_resnet_sonar_bind import CLIPImageResNetSonarBind
+from .dq_sonarbind import DQSonarBind
+from .sonarbind_lganet import SonarBindLGANet
+from .sonarbind_prism import SonarBindPrism
 
 __all__ = [
     'ATSS', 'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
@@ -76,5 +82,6 @@ __all__ = [
     'RTMDet', 'Detectron2Wrapper', 'CrowdDet', 'CondInst', 'BoxInst',
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
     'DDQDETR', 'GroundingDINO', 'DQDETR', 'DQDINO', 'UCFDINO', 'GatedFusion',
-    'ThirdGroundingDINO'
+    'ThirdGroundingDINO', 'SonarBind', 'CLIPSonarBind', 'CLIPImageResNetSonarBind',
+    'DQSonarBind', 'SonarBindLGANet', 'SonarBindPrism'
 ]
