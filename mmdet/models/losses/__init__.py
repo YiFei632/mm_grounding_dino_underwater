@@ -6,6 +6,7 @@ from .contrastive_loss import ContrastiveLoss
 from .cross_entropy_loss import (CrossEntropyCustomLoss, CrossEntropyLoss,
                                  binary_cross_entropy, cross_entropy,
                                  mask_cross_entropy)
+from .roi_contrastive_focal_loss import RoIContrastiveFocalLoss
 from .ddq_detr_aux_loss import DDQAuxLoss
 from .dice_loss import DiceLoss
 from .eqlv2_loss import EQLV2Loss
@@ -40,5 +41,5 @@ __all__ = [
     'KnowledgeDistillationKLDivLoss', 'SeesawLoss', 'DiceLoss', 'EQLV2Loss',
     'MarginL2Loss', 'MultiPosCrossEntropyLoss', 'L2Loss', 'TripletLoss',
     'DDQAuxLoss', 'CrossEntropyCustomLoss', 'FocalCustomLoss',
-    'ContrastiveLoss'
+    'ContrastiveLoss', 'RoIContrastiveFocalLoss'
 ]

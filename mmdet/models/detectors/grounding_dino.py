@@ -91,8 +91,9 @@ class GroundingDINO(DINO):
     def init_weights(self) -> None:
         """Initialize weights for Transformer and other components."""
         super().init_weights()
-        nn.init.constant_(self.text_feat_map.bias.data, 0)
-        nn.init.xavier_uniform_(self.text_feat_map.weight.data)
+        if hasattr(self, 'text_feat_map') and self.text_feat_map is not None:
+            nn.init.constant_(self.text_feat_map.bias.data, 0)
+            nn.init.xavier_uniform_(self.text_feat_map.weight.data)
 
     def to_enhance_text_prompts(self, original_caption, enhanced_text_prompts):
         caption_string = ''

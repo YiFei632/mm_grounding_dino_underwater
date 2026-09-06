@@ -13,6 +13,7 @@ from .loading import (FilterAnnotations, InferencerLoader, LoadAnnotations,
                       LoadEmptyAnnotations, LoadImageFromNDArray,
                       LoadMultiChannelImageFromFiles, LoadPanopticAnnotations,
                       LoadProposals, LoadSonarImage, LoadTrackAnnotations)
+from .loading_rgbs import LoadRGBSImageFromFile
 from .text_transformers import (LoadClassNamesAsText, LoadTextAnnotations,
                                 RandomSamplingNegPos)
 from .transformers_glip import GTBoxSubOne_GLIP, RandomFlip_GLIP
@@ -29,7 +30,7 @@ __all__ = [
     'PackDetInputs', 'ToTensor', 'ImageToTensor', 'Transpose',
     'LoadImageFromNDArray', 'LoadAnnotations', 'LoadPanopticAnnotations',
     'LoadMultiChannelImageFromFiles', 'LoadProposals', 'LoadSonarImage',
-    'Resize', 'RandomFlip',
+    'LoadRGBSImageFromFile', 'Resize', 'RandomFlip',
     'RandomCrop', 'SegRescale', 'MinIoURandomCrop', 'Expand',
     'PhotoMetricDistortion', 'Albu', 'InstaBoost', 'RandomCenterCropPad',
     'AutoAugment', 'CutOut', 'ShearX', 'ShearY', 'Rotate', 'Color', 'Equalize',

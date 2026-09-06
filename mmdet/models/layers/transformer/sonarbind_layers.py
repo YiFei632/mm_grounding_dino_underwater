@@ -25,28 +25,32 @@ except Exception:
 class SonarBindTransformerDecoderLayer(DeformableDetrTransformerDecoderLayer):
 
     def __init__(self,
-                 cross_attn_text_cfg: OptConfigType = dict(
-                     embed_dims=256,
-                     num_heads=8,
-                     dropout=0.0,
-                     batch_first=True),
+                 cross_attn_text_cfg: OptConfigType = None,
+                 use_text_cross_attn: bool = True,
                  **kwargs) -> None:
         """Decoder layer of Deformable DETR."""
         self.cross_attn_text_cfg = cross_attn_text_cfg
-        if 'batch_first' not in self.cross_attn_text_cfg:
+        self.use_text_cross_attn = use_text_cross_attn
+        if self.cross_attn_text_cfg is not None and 'batch_first' not in self.cross_attn_text_cfg:
             self.cross_attn_text_cfg['batch_first'] = True
         super().__init__(**kwargs)
 
     def _init_layers(self) -> None:
         """Initialize self_attn, cross-attn, ffn, and norms."""
         self.self_attn = MultiheadAttention(**self.self_attn_cfg)
-        self.cross_attn_text = MultiheadAttention(**self.cross_attn_text_cfg)
+        # Conditional initialization of text cross attention
+        if self.use_text_cross_attn and self.cross_attn_text_cfg is not None:
+            self.cross_attn_text = MultiheadAttention(**self.cross_attn_text_cfg)
+        else:
+            self.cross_attn_text = None
         self.cross_attn = MultiScaleDeformableAttention(**self.cross_attn_cfg)
         self.embed_dims = self.self_attn.embed_dims
         self.ffn = FFN(**self.ffn_cfg)
+        # Adjust number of norms based on whether text cross attention is used
+        num_norms = 4 if self.use_text_cross_attn else 3
         norms_list = [
             build_norm_layer(self.norm_cfg, self.embed_dims)[1]
-            for _ in range(4)
+            for _ in range(num_norms)
         ]
         self.norms = ModuleList(norms_list)
 
@@ -106,14 +110,18 @@ class SonarBindTransformerDecoderLayer(DeformableDetrTransformerDecoderLayer):
             attn_mask=self_attn_mask,
             **kwargs)
         query = self.norms[0](query)
-        # cross attention between query and text
-        query = self.cross_attn_text(
-            query=query,
-            query_pos=query_pos,
-            key=memory_text,
-            value=memory_text,
-            key_padding_mask=text_attention_mask)
-        query = self.norms[1](query)
+        # cross attention between query and text (conditional)
+        if self.cross_attn_text is not None and memory_text is not None:
+            query = self.cross_attn_text(
+                query=query,
+                query_pos=query_pos,
+                key=memory_text,
+                value=memory_text,
+                key_padding_mask=text_attention_mask)
+            query = self.norms[1](query)
+            norm_idx = 2  # next norm index
+        else:
+            norm_idx = 1  # skip text norm
         # cross attention between query and image
         query = self.cross_attn(
             query=query,
@@ -124,24 +132,41 @@ class SonarBindTransformerDecoderLayer(DeformableDetrTransformerDecoderLayer):
             attn_mask=cross_attn_mask,
             key_padding_mask=key_padding_mask,
             **kwargs)
-        query = self.norms[2](query)
+        query = self.norms[norm_idx](query)
         query = self.ffn(query)
-        query = self.norms[3](query)
+        query = self.norms[norm_idx + 1](query)
 
         return query
 
 
 class SonarBindTransformerEncoder(DeformableDetrTransformerEncoder):
 
-    def __init__(self, text_layer_cfg: ConfigType,
-                 fusion_layer_cfg: ConfigType,
+    def __init__(self, text_layer_cfg: ConfigType = None,
+                 fusion_layer_cfg: ConfigType = None,
                  fusion_image_sonar_cfg: ConfigType = None,
                  sonar_layer_cfg: ConfigType = None,
+                 use_text_branch: bool = True,
                  **kwargs) -> None:
         self.text_layer_cfg = text_layer_cfg
         self.fusion_layer_cfg = fusion_layer_cfg
-        self.fusion_image_sonar_cfg = fusion_image_sonar_cfg if fusion_image_sonar_cfg is not None else fusion_layer_cfg
+        # fusion_image_sonar_cfg is required for image-sonar fusion
+        # If not provided, use fusion_layer_cfg as fallback
+        # If both are None, create a default config
+        if fusion_image_sonar_cfg is not None:
+            self.fusion_image_sonar_cfg = fusion_image_sonar_cfg
+        elif fusion_layer_cfg is not None:
+            self.fusion_image_sonar_cfg = fusion_layer_cfg
+        else:
+            # Default config for image-sonar fusion
+            self.fusion_image_sonar_cfg = dict(
+                v_dim=256,
+                l_dim=256,
+                embed_dim=1024,
+                num_heads=4,
+                init_values=1e-4
+            )
         self.sonar_layer_cfg = sonar_layer_cfg
+        self.use_text_branch = use_text_branch
         # 移除'type'键，因为父类不需要
         kwargs.pop('type', None)
         super().__init__(**kwargs)
@@ -152,18 +177,26 @@ class SonarBindTransformerEncoder(DeformableDetrTransformerEncoder):
             DeformableDetrTransformerEncoderLayer(**self.layer_cfg)
             for _ in range(self.num_layers)
         ])
-        self.text_layers = ModuleList([
-            DetrTransformerEncoderLayer(**self.text_layer_cfg)
-            for _ in range(self.num_layers)
-        ])
+        # Conditional initialization based on use_text_branch
+        if self.use_text_branch and self.text_layer_cfg is not None:
+            self.text_layers = ModuleList([
+                DetrTransformerEncoderLayer(**self.text_layer_cfg)
+                for _ in range(self.num_layers)
+            ])
+            self.fusion_visual_text_layers = ModuleList([
+                SingleScaleBiAttentionBlock(**self.fusion_layer_cfg)
+                for _ in range(self.num_layers)
+            ])
+        else:
+            self.text_layers = None
+            self.fusion_visual_text_layers = None
+
+        # Image-sonar fusion always initialized
         self.fusion_image_sonar_layers = ModuleList([
             SingleScaleBiAttentionBlock(**self.fusion_image_sonar_cfg)
             for _ in range(self.num_layers)
         ])
-        self.fusion_visual_text_layers = ModuleList([
-            SingleScaleBiAttentionBlock(**self.fusion_layer_cfg)
-            for _ in range(self.num_layers)
-        ])
+
         self.embed_dims = self.layers[0].embed_dims
         if self.num_cp > 0:
             if checkpoint_wrapper is None:
@@ -175,8 +208,9 @@ class SonarBindTransformerEncoder(DeformableDetrTransformerEncoder):
                 self.layers[i] = checkpoint_wrapper(self.layers[i])
                 self.fusion_image_sonar_layers[i] = checkpoint_wrapper(
                     self.fusion_image_sonar_layers[i])
-                self.fusion_visual_text_layers[i] = checkpoint_wrapper(
-                    self.fusion_visual_text_layers[i])
+                if self.fusion_visual_text_layers is not None:
+                    self.fusion_visual_text_layers[i] = checkpoint_wrapper(
+                        self.fusion_visual_text_layers[i])
 
     def forward(self,
                 query: Tensor,
@@ -225,7 +259,10 @@ class SonarBindTransformerEncoder(DeformableDetrTransformerEncoder):
                 Defaults to None.
         """
         output = query
-        output_sonar = query_sonar
+        # Unlike RGB deformable attention, the sonar stream has no separate
+        # spatial attention layer.  Preserve its spatial identity by injecting
+        # the positional encoding before repeated RGB-sonar fusion.
+        output_sonar = query_sonar + query_sonar_pos
         reference_points = self.get_encoder_reference_points(
             spatial_shapes, valid_ratios, device=query.device)
         if self.text_layers:
@@ -246,8 +283,8 @@ class SonarBindTransformerEncoder(DeformableDetrTransformerEncoder):
 
         # main process
         for layer_id, layer in enumerate(self.layers):
-            
-            
+
+
             if self.fusion_image_sonar_layers:
                 output, output_sonar = self.fusion_image_sonar_layers[layer_id](
                     visual_feature=output,
@@ -255,7 +292,8 @@ class SonarBindTransformerEncoder(DeformableDetrTransformerEncoder):
                     attention_mask_v=key_padding_mask,
                     attention_mask_l=sonar_padding_mask,
                 )
-            if self.text_layers:
+            # Conditional text processing
+            if self.text_layers and memory_text is not None:
                 text_num_heads = self.text_layers[
                     layer_id].self_attn_cfg.num_heads
                 memory_text = self.text_layers[layer_id](
@@ -265,7 +303,7 @@ class SonarBindTransformerEncoder(DeformableDetrTransformerEncoder):
                         text_num_heads, 1, 1),  # note we use ~ for mask here
                     key_padding_mask=None,
                 )
-            if self.fusion_visual_text_layers:
+            if self.fusion_visual_text_layers and memory_text is not None:
                 output, memory_text = self.fusion_visual_text_layers[layer_id](
                     visual_feature=output,
                     lang_feature=memory_text,

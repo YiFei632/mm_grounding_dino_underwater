@@ -21,6 +21,7 @@ from .cswin import CSWinTransformer
 from .image_enhancer import UnderwaterImageEnhancer
 from .clip_vit import CLIPViTBackbone
 from .lganet import LGANet
+from .scanet_vit import SCANetViT
 
 __all__ = [
     'RegNet', 'ResNet', 'ResNetV1d', 'ResNeXt', 'SSDVGG', 'HRNet',
@@ -28,5 +29,5 @@ __all__ = [
     'DetectoRS_ResNeXt', 'Darknet', 'ResNeSt', 'TridentResNet', 'CSPDarknet',
     'SwinTransformer', 'PyramidVisionTransformer',
     'PyramidVisionTransformerV2', 'EfficientNet', 'CSPNeXt', 'CSWinTransformer',
-    'UnderwaterImageEnhancer', 'CLIPViTBackbone', 'LGANet'
+    'UnderwaterImageEnhancer', 'CLIPViTBackbone', 'LGANet', 'SCANetViT'
 ]

@@ -101,8 +101,9 @@ class ThirdGroundingDINO(GroundingDINO):
     def init_weights(self) -> None:
         """Initialize weights for Transformer and other components."""
         super().init_weights()
-        nn.init.constant_(self.text_feat_map.bias.data, 0)
-        nn.init.xavier_uniform_(self.text_feat_map.weight.data)
+        if hasattr(self, 'text_feat_map') and self.text_feat_map is not None:
+            nn.init.constant_(self.text_feat_map.bias.data, 0)
+            nn.init.xavier_uniform_(self.text_feat_map.weight.data)
         nn.init.constant_(self.sonar_feat_map.bias.data, 0)
         nn.init.xavier_uniform_(self.sonar_feat_map.weight.data)
 
@@ -345,6 +346,13 @@ class ThirdGroundingDINO(GroundingDINO):
                     sonar_img = torch.from_numpy(sonar_img)
                 if sonar_img.device != mlvl_feats[0].device:
                     sonar_img = sonar_img.to(mlvl_feats[0].device)
+
+                # Grayscale sonar may be packed as [1, H, W], while the
+                # ImageNet-pretrained ResNet stem expects three channels.
+                if sonar_img.ndim == 2:
+                    sonar_img = sonar_img.unsqueeze(0)
+                if sonar_img.shape[0] == 1:
+                    sonar_img = sonar_img.repeat(3, 1, 1)
 
                 # 转换为 float32
                 if sonar_img.dtype == torch.uint8:

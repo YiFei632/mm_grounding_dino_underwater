@@ -11,4 +11,4 @@ model = dict(
         norm_cfg=dict(type='BN', requires_grad=True),
         style='pytorch',
         init_cfg=dict(
-            type='Pretrained', checkpoint='open-mmlab://resnext101_64x4d')))
+            type='Pretrained', checkpoint='/media/fishyu/fish-14tb-2/YiFei/Grounding_DINO/mmdetection/checkpoints/resnext101_64x4d-ee2c6f71.pth')))

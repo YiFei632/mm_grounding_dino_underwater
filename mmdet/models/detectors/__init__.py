@@ -68,6 +68,7 @@ from .clip_image_resnet_sonar_bind import CLIPImageResNetSonarBind
 from .dq_sonarbind import DQSonarBind
 from .sonarbind_lganet import SonarBindLGANet
 from .sonarbind_prism import SonarBindPrism
+from .sonarbind_prism_pretrain import SonarBindPrismPretrain
 
 __all__ = [
     'ATSS', 'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
@@ -83,5 +84,5 @@ __all__ = [
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
     'DDQDETR', 'GroundingDINO', 'DQDETR', 'DQDINO', 'UCFDINO', 'GatedFusion',
     'ThirdGroundingDINO', 'SonarBind', 'CLIPSonarBind', 'CLIPImageResNetSonarBind',
-    'DQSonarBind', 'SonarBindLGANet', 'SonarBindPrism'
+    'DQSonarBind', 'SonarBindLGANet', 'SonarBindPrism', 'SonarBindPrismPretrain'
 ]

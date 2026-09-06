@@ -69,7 +69,10 @@ def print_model_stats(runner):
     submodule_stats = []
     for attr, label in candidate_names:
         if hasattr(model, attr):
-            mod     = getattr(model, attr)
+            mod = getattr(model, attr)
+            # Skip if module is None (e.g., language_model when use_text_branch=False)
+            if mod is None:
+                continue
             p_total = sum(p.numel() for p in mod.parameters())
             p_train = sum(p.numel() for p in mod.parameters()
                           if p.requires_grad)

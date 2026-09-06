@@ -1109,6 +1109,9 @@ class LoadSonarImage(BaseTransform):
             Should contain 'train_images' and 'val_images' subdirectories.
             If None, will try to infer from img_path by replacing RGB root.
             Defaults to None.
+        flat_layout (bool): Whether ``sonar_data_root`` directly contains
+            sonar files instead of ``train_images``/``val_images``
+            subdirectories. Defaults to False.
         to_float32 (bool): Whether to convert the loaded image to a float32
             numpy array. If set to False, the loaded image is an uint8 array.
             Defaults to False.
@@ -1128,13 +1131,15 @@ class LoadSonarImage(BaseTransform):
                  color_type: str = 'color',
                  imdecode_backend: str = 'cv2',
                  backend_args: Optional[dict] = None,
-                 use_zero_fallback: bool = False) -> None:
+                 use_zero_fallback: bool = False,
+                 flat_layout: bool = False) -> None:
         self.sonar_data_root = sonar_data_root
         self.to_float32 = to_float32
         self.color_type = color_type
         self.imdecode_backend = imdecode_backend
         self.backend_args = backend_args
         self.use_zero_fallback = use_zero_fallback
+        self.flat_layout = flat_layout
 
     def transform(self, results: dict) -> dict:
         """Transform function to load sonar image.
@@ -1154,28 +1159,37 @@ class LoadSonarImage(BaseTransform):
         # Extract filename from RGB image path
         filename = os.path.basename(img_path)
 
-        # Determine which split (train or val) based on the path
-        if 'train' in img_path or '/train_images/' in img_path:
-            split = 'train_images'
-        elif 'val' in img_path or '/val_images/' in img_path:
-            split = 'val_images'
-        else:
-            # Fallback: try to detect from parent directory name
-            parent_dir = os.path.basename(os.path.dirname(img_path))
-            if 'train' in parent_dir.lower():
+        # Keep the legacy split inference for all non-flat configurations,
+        # including the ``sonar_data_root=None`` fallback path.
+        if not self.flat_layout:
+            # Determine which split (train or val) based on the path
+            if 'train' in img_path or '/train_images/' in img_path:
                 split = 'train_images'
-            elif 'val' in parent_dir.lower():
+            elif 'val' in img_path or '/val_images/' in img_path:
                 split = 'val_images'
             else:
-                # Default to train if cannot determine
-                split = 'train_images'
-                warnings.warn(
-                    f'Cannot determine train/val split from path: {img_path}. '
-                    f'Defaulting to train_images.')
+                # Fallback: try to detect from parent directory name
+                parent_dir = os.path.basename(os.path.dirname(img_path))
+                if 'train' in parent_dir.lower():
+                    split = 'train_images'
+                elif 'val' in parent_dir.lower():
+                    split = 'val_images'
+                else:
+                    # Default to train if cannot determine
+                    split = 'train_images'
+                    warnings.warn(
+                        f'Cannot determine train/val split from path: '
+                        f'{img_path}. Defaulting to train_images.')
 
         # Construct sonar image path
         if self.sonar_data_root is not None:
-            sonar_path = os.path.join(self.sonar_data_root, split, filename)
+            if self.flat_layout:
+                # The RGB and sonar splits may be defined independently, so
+                # match the paired image by filename in one flat directory.
+                sonar_path = os.path.join(self.sonar_data_root, filename)
+            else:
+                sonar_path = os.path.join(self.sonar_data_root, split,
+                                          filename)
         else:
             # Fallback: try to infer by replacing RGBS50_image with RGBS50_sonar
             if 'RGBS50_image' in img_path:
@@ -1228,5 +1242,6 @@ class LoadSonarImage(BaseTransform):
         repr_str += f'to_float32={self.to_float32}, '
         repr_str += f"color_type='{self.color_type}', "
         repr_str += f"imdecode_backend='{self.imdecode_backend}', "
-        repr_str += f"use_zero_fallback={self.use_zero_fallback})"
+        repr_str += f'use_zero_fallback={self.use_zero_fallback}, '
+        repr_str += f'flat_layout={self.flat_layout})'
         return repr_str
