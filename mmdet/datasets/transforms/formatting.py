@@ -128,6 +128,8 @@ class PackDetInputs(BaseTransform):
                     instance_data[self.mapping_table[key]] = to_tensor(
                         results[key])
         data_sample.gt_instances = instance_data
+        if 'sonar_gt_bboxes' in results:
+            data_sample.sonar_gt_instances = InstanceData(bboxes=to_tensor(results['sonar_gt_bboxes']), labels=to_tensor(results['sonar_gt_labels']))
         data_sample.ignored_instances = ignore_instance_data
 
         if 'proposals' in results:

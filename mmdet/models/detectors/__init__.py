@@ -19,6 +19,7 @@ from .detr import DETR
 from .dino import DINO
 from .fast_rcnn import FastRCNN
 from .faster_rcnn import FasterRCNN
+from .uamfdet import UAMFDet
 from .fcos import FCOS
 from .fovea import FOVEA
 from .fsaf import FSAF
@@ -69,9 +70,10 @@ from .dq_sonarbind import DQSonarBind
 from .sonarbind_lganet import SonarBindLGANet
 from .sonarbind_prism import SonarBindPrism
 from .sonarbind_prism_pretrain import SonarBindPrismPretrain
+from .oag import OAG
 
 __all__ = [
-    'ATSS', 'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
+    'UAMFDet', 'ATSS', 'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
     'KnowledgeDistillationSingleStageDetector', 'FastRCNN', 'FasterRCNN',
     'MaskRCNN', 'CascadeRCNN', 'HybridTaskCascade', 'RetinaNet', 'FCOS',
     'GridRCNN', 'MaskScoringRCNN', 'RepPointsDetector', 'FOVEA', 'FSAF',
@@ -84,5 +86,5 @@ __all__ = [
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
     'DDQDETR', 'GroundingDINO', 'DQDETR', 'DQDINO', 'UCFDINO', 'GatedFusion',
     'ThirdGroundingDINO', 'SonarBind', 'CLIPSonarBind', 'CLIPImageResNetSonarBind',
-    'DQSonarBind', 'SonarBindLGANet', 'SonarBindPrism', 'SonarBindPrismPretrain'
+    'DQSonarBind', 'SonarBindLGANet', 'SonarBindPrism', 'SonarBindPrismPretrain', 'OAG'
 ]

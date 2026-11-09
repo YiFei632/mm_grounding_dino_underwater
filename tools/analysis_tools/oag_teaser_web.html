@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OAG Teaser</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui;color:#20272d;background:#f5f6f8}
+header{padding:16px 20px;background:white;border-bottom:1px solid #d4dbe0}h1{font-size:20px;margin:0 0 8px}
+main{display:grid;grid-template-columns:245px minmax(0,1fr)}aside{padding:16px;background:white;border-right:1px solid #d4dbe0}section{padding:18px;min-width:0}
+input,select,button{font:inherit;border:1px solid #bdc7cf;border-radius:4px;background:white;padding:6px;color:inherit}
+button,a{cursor:pointer}button:disabled{opacity:.4}input[type=number]{width:105px}input[type=range]{width:100px}#search{width:100%}
+#list{height:65vh;overflow:auto}#list button{display:block;width:100%;text-align:left;overflow-wrap:anywhere;margin:6px 0}.active{background:#d8eeee}
+.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}label{display:flex;align-items:center;gap:6px}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:22px}figure{margin:0;min-width:0}h2{font-size:18px}h3{font-size:16px}
+img{display:block;width:100%;height:auto;background:repeating-conic-gradient(#eee 0% 25%,white 0% 50%) 0 / 16px 16px}
+.muted{color:#60707c;font-size:12px;overflow-wrap:anywhere}.error{color:#b12a3e}a{color:#176f79}
+#status{min-height:22px;margin:12px 0}.controls{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.legend{display:flex;gap:10px;align-items:center;margin:10px 0}.bar{height:10px;flex:1;max-width:220px}.optical{background:linear-gradient(to right,#30123b,#4685fa,#1ae4b6,#a4fc3c,#f9ba38,#e2460a,#7a0403)}.acoustic{background:linear-gradient(to right,white,#e83955)}
+@media(max-width:900px){main,.panels{grid-template-columns:1fr}#list{height:170px}aside{border-right:0;border-bottom:1px solid #d4dbe0}}
+</style>
+<header><h1>OAG Teaser</h1><div id="model" class="muted"></div></header>
+<main><aside><input id="search" type="search" placeholder="文件名、图片 ID 或索引" aria-label="搜索图片">
+<p id="count"></p><div id="list"></div><button id="pagePrev">上一页</button> <span id="page"></span> <button id="pageNext">下一页</button></aside>
+<section><div class="toolbar"><button id="previous" disabled>上一张</button><button id="next" disabled>下一张</button>
+<label>类别 <select id="category"></select></label><label>尺度 <select id="level"></select></label>
+<label>光学分数 <select id="mode"><option value="sigmoid">Sigmoid</option><option value="logit">Logit</option></select></label>
+<button id="auto">自动范围</button><label><input id="transparent" type="checkbox">透明背景</label></div>
+<h2 id="title">选择验证图片</h2><div id="status" role="status"></div>
+<div id="panels" hidden><div class="panels">
+<figure><h3>Optical Feature · 类别响应</h3>
+<div class="controls"><label>下限<input id="opticalLower" type="number" step="any" value="0"></label><label>上限<input id="opticalUpper" type="number" step="any" value="1"></label>
+<label>可见阈值<input id="opticalThreshold" type="range" min="0" max="1" step="0.01" value="0"><output id="opticalValue">0.00</output></label>
+<label>透明度<input id="opticalAlpha" type="range" min="0" max="255" value="180"></label></div>
+<img id="optical" alt="光学特征的类别响应热图"><div class="legend"><span id="opticalLow"></span><div class="bar optical"></div><span id="opticalHigh"></span></div>
+<a id="opticalPng" download>PNG</a> · <a id="opticalData" download>原始数值 NPZ</a></figure>
+<figure><h3>Acoustic Position Prior</h3>
+<div class="controls"><label>下限<input id="acousticLower" type="number" step="any" value="0"></label><label>上限<input id="acousticUpper" type="number" step="any" value="1"></label>
+<label>可见阈值<input id="acousticThreshold" type="range" min="0" max="1" step="0.01" value="0.5"><output id="acousticValue">0.50</output></label>
+<label>透明度<input id="acousticAlpha" type="range" min="0" max="255" value="180"></label>
+<label>底图饱和度<input id="saturation" type="range" min="0" max="1" step="0.05" value="0.25"></label>
+<label><input id="contours" type="checkbox" checked>等高线</label></div>
+<img id="acoustic" alt="RGB图上的声呐位置先验热区和等高线"><div class="legend"><span id="acousticLow"></span><div class="bar acoustic"></div><span id="acousticHigh"></span></div>
+<a id="acousticPng" download>PNG</a> · <a id="acousticData" download>原始数值 NPZ</a></figure>
+</div><p><button id="apply">应用</button> <a id="original" target="_blank" rel="noopener">原始 RGB</a></p>
+<p id="note" class="muted"></p></div></section></main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);let total=0,offset=0,selected=-1,record=null,token=0,listToken=0,timer;
+async function json(url){const r=await fetch(url),data=await r.json();if(!r.ok)throw Error(data.error||r.statusText);return data;}
+function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
+function option(select,value,label){const o=document.createElement('option');o.value=value;o.textContent=label;select.append(o);}
+async function list(){const id=++listToken,r=await json(`/api/images?q=${encodeURIComponent($('search').value)}&offset=${offset}`);if(id!==listToken)return;
+ $('count').textContent=`${r.total} / 验证集 ${total} 张`;$('list').replaceChildren();
+ for(const image of r.images){const b=document.createElement('button');b.textContent=`${image.index} · ${image.name}`;b.classList.toggle('active',image.index===selected);b.onclick=()=>select(image.index);$('list').append(b);}
+ $('page').textContent=r.total?`${offset/40+1}/${Math.ceil(r.total/40)}`:'0/0';$('pagePrev').disabled=offset===0;$('pageNext').disabled=offset+40>=r.total;}
+function autoRange(){if(!record)return;const category=$('category').value;
+ for(const kind of ['optical','acoustic']){const key=kind==='optical'?`encoder_${$('mode').value}`:'sonar_logit';const ranges=record.ranges[key];
+ const range=category==='all'?[Math.min(...ranges.map(r=>r[0])),Math.max(...ranges.map(r=>r[1]))]:ranges[Number(category)];
+ let [low,high]=range;if(high<=low)high=low+Math.max(1e-6,Math.abs(low)*1e-6);$(kind+'Lower').value=low.toPrecision(7);$(kind+'Upper').value=high.toPrecision(7);}}
+function params(kind){return new URLSearchParams({kind,class:$('category').value,level:$('level').value,mode:$('mode').value,
+ lower:$(kind+'Lower').value,upper:$(kind+'Upper').value,threshold:$(kind+'Threshold').value,alpha:$(kind+'Alpha').value,
+ saturation:$('saturation').value,contours:$('contours').checked?'1':'0',transparent:$('transparent').checked?'1':'0'});}
+async function image(url){const r=await fetch(url);if(!r.ok){const e=await r.json();throw Error(e.error||r.statusText);}const src=URL.createObjectURL(await r.blob());
+ try{await new Promise((resolve,reject)=>{const img=new Image();img.onload=resolve;img.onerror=reject;img.src=src;});return src;}catch(e){URL.revokeObjectURL(src);throw e;}}
+async function render(){if(!record)return;const id=++token,index=selected;status('正在生成…');
+ const kinds=['optical','acoustic'],urls=kinds.map(k=>`/api/render/${index}?${params(k)}`),dataUrls=kinds.map(k=>`/api/download/${index}?${params(k)}`);
+ try{const images=await Promise.all(urls.map(image));if(id!==token){images.forEach(URL.revokeObjectURL);return;}
+ kinds.forEach((k,i)=>{if($(k).dataset.url)URL.revokeObjectURL($(k).dataset.url);$(k).src=images[i];$(k).dataset.url=images[i];
+ $(k+'Png').href=urls[i];$(k+'Png').download=`val_${index}_${k}.png`;$(k+'Data').href=dataUrls[i];$(k+'Low').textContent=Number($(k+'Lower').value).toPrecision(3);$(k+'High').textContent=Number($(k+'Upper').value).toPrecision(3);});
+ $('panels').hidden=false;status('已就绪。');}catch(e){if(id===token)status(e.message,true);}}
+async function select(index){if(index<0||index>=total)return;const oldClass=$('category').value;selected=index;record=null;const id=++token;$('panels').hidden=true;
+ $('previous').disabled=index===0;$('next').disabled=index===total-1;status('正在提取特征…');history.replaceState(null,'',`#image=${index}`);
+ try{const r=await json(`/api/meta/${index}`);if(id!==token)return;record=r;$('title').textContent=`${index} · ${r.name}`;
+ $('category').replaceChildren();r.classes.forEach((c,i)=>option($('category'),String(i),c));option($('category'),'all','全部类别（最大响应）');
+ if([...$('category').options].some(o=>o.value===oldClass))$('category').value=oldClass;
+ $('level').replaceChildren();option($('level'),'all','全部尺度');r.shapes.forEach((s,i)=>option($('level'),String(i),`L${i} · ${s[0]} × ${s[1]}`));
+ $('note').textContent=`光学图为 RGB–文本 encoder 特征的类别响应；声呐图为模型实际带权重的位置提示（权重 ${r.sonar_weight}）。可见阈值按各自颜色范围的 0–1 比例设置。`;
+ $('original').href=`/api/original/${index}`;autoRange();await render();list().catch(e=>status(e.message,true));}catch(e){if(id===token)status(e.message,true);}}
+$('search').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{offset=0;list().catch(e=>status(e.message,true));},250);};
+$('pagePrev').onclick=()=>{offset-=40;list().catch(e=>status(e.message,true));};$('pageNext').onclick=()=>{offset+=40;list().catch(e=>status(e.message,true));};
+$('previous').onclick=()=>select(selected-1);$('next').onclick=()=>select(selected+1);$('apply').onclick=render;$('auto').onclick=()=>{autoRange();render();};
+$('category').onchange=$('mode').onchange=()=>{autoRange();render();};
+for(const kind of ['optical','acoustic']){$(kind+'Threshold').oninput=()=>$(kind+'Value').textContent=Number($(kind+'Threshold').value).toFixed(2);$(kind+'Threshold').onchange=$(kind+'Alpha').onchange=render;}
+for(const key of ['level','transparent','saturation','contours'])$(key).onchange=render;
+(async()=>{try{const i=await json('/api/info');total=i.total;$('model').textContent=`${i.model} · ${i.config} · ${i.checkpoint}`;await list();status('请选择验证图片。');
+ const initial=new URLSearchParams(location.hash.slice(1)).get('image');if(initial!==null&&/^\d+$/.test(initial))select(Number(initial));}catch(e){status(e.message,true);}})();
+</script></html>

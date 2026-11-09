@@ -46,3 +46,6 @@ __all__ = [
     'ResizeShortestEdge', 'GTBoxSubOne_GLIP', 'RandomFlip_GLIP',
     'RandomSamplingNegPos', 'LoadTextAnnotations', 'LoadClassNamesAsText'
 ]
+from .loading_uamfdet import LoadUAMFDetImages
+
+from .sonar_annotations import LoadSonarAnnotations

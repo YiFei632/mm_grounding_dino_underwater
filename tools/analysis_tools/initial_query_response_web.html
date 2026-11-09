@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Encoder 类别响应</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6f8;color:#20252a;font:14px system-ui}
+header{padding:14px 22px;background:white;border-bottom:1px solid #d6dce1}h1{font-size:20px;margin:0 0 6px}
+main{display:grid;grid-template-columns:255px minmax(0,1fr);min-height:85vh}
+aside{padding:16px;border-right:1px solid #d6dce1;background:#fff}section{padding:18px;min-width:0}
+input,select,button{font:inherit;color:inherit;border:1px solid #bec8d0;border-radius:4px;padding:7px;background:white}
+button,a{cursor:pointer}button:hover{background:#e9f2f2}button:disabled{opacity:.45;cursor:default}
+#search{width:100%}#list{height:65vh;overflow:auto}#list button{display:block;width:100%;text-align:left;margin:5px 0;overflow-wrap:anywhere}
+#list .active{background:#d4eeee;border-color:#398a8a}.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+label{display:flex;gap:6px;align-items:center}input[type=number]{width:92px}input[type=range]{width:100px}
+.panels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}figure{margin:0;min-width:0;overflow:auto}
+figure[hidden]{display:none}h2{font-size:18px}h3{font-size:15px;margin:0 0 8px}
+img{display:block;width:100%;cursor:zoom-in}img.zoom{width:auto;max-width:none}a{color:#176873}
+.muted{color:#62707c;font-size:12px;overflow-wrap:anywhere}#status{min-height:22px;margin:12px 0}.error{color:#b63434}
+.legend{display:flex;align-items:center;gap:10px;max-width:420px;margin:14px 0}
+.bar{height:10px;flex:1;background:linear-gradient(to right,#000080,blue,cyan,#80ff80,yellow,red,#800000)}
+#note{max-width:1000px;line-height:1.6}#model{overflow-wrap:anywhere}
+@media(max-width:900px){main{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #d6dce1}#list{height:170px}.panels{grid-template-columns:1fr}}
+</style>
+<header><h1>Encoder 类别响应与初始 Query</h1><div id="model" class="muted"></div></header>
+<main>
+<aside>
+<input id="search" type="search" placeholder="文件名、图片 ID 或索引" aria-label="搜索验证图片">
+<p id="count"></p><div id="list"></div>
+<button id="pagePrev">上一页</button> <span id="page"></span> <button id="pageNext">下一页</button>
+</aside>
+<section>
+<div class="toolbar">
+<button id="previous" disabled>上一张</button><button id="next" disabled>下一张</button>
+<label>类别 <select id="category"><option value="all">全部类别（最大响应）</option></select></label>
+<label>尺度 <select id="level"><option value="all">全部尺度</option></select></label>
+<label>分数 <select id="mode"><option value="logit">原始 Logit</option><option value="sigmoid">Sigmoid 响应</option></select></label>
+</div>
+<div class="toolbar">
+<label>显示下限 <input id="lower" type="number" step="any" value="0"></label>
+<label>颜色上限 <input id="upper" type="number" step="any" value="1"></label>
+<button id="autoRange">自动范围</button>
+<label>透明度 <input id="alpha" type="range" min="0" max="255" value="180"></label>
+<label><input id="points" type="checkbox">热图叠加 Query</label>
+<button id="refresh">应用</button>
+</div>
+<h2 id="title">选择一张验证图片</h2><div id="status" role="status" aria-live="polite"></div>
+<div id="panels" hidden>
+<div class="panels">
+<figure><h3>原始 RGB</h3><img id="original" alt="原始RGB图像"></figure>
+<figure><h3 id="encoderTitle">Encoder 类别响应</h3><img id="encoder" alt="Encoder类别响应热图"><p><a id="encoderDownload" download>下载 PNG</a></p></figure>
+<figure id="selectionPanel"><h3>叠加声呐提示后的类别响应</h3><img id="selection" alt="叠加声呐提示后的类别响应"><p><a id="selectionDownload" download>下载 PNG</a></p></figure>
+<figure><h3 id="queryTitle">初始 Query</h3><img id="queries" alt="实际初始Query位置"><p><a id="queriesDownload" download>下载 PNG</a></p></figure>
+</div>
+<div class="legend"><span id="lowLabel"></span><div class="bar"></div><span id="highLabel"></span></div>
+<p id="note" class="muted"></p>
+<p><a id="dataDownload" download>下载原始响应与 Query（NPZ）</a></p>
+<details id="sonarDetails" hidden><summary>声呐叠加项</summary>
+<div class="toolbar" style="margin-top:12px">
+<label>下限 <input id="sonarLower" type="number" value="0" step="any"></label>
+<label>上限 <input id="sonarUpper" type="number" value="1" step="any"></label>
+<button id="sonarRefresh">应用</button></div>
+<img id="sonar" alt="带权重的声呐叠加项"><p><a id="sonarDownload" download>下载 PNG</a></p>
+</details>
+</div>
+</section></main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let total=0,offset=0,found=0,selected=-1,listToken=0,token=0,timer,record=null,busy=false;
+async function json(url){const response=await fetch(url),value=await response.json();if(!response.ok)throw Error(value.error||response.statusText);return value;}
+function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
+function addOption(select,value,text){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+async function list(){
+ const id=++listToken,r=await json(`/api/images?q=${encodeURIComponent($('search').value)}&offset=${offset}`);
+ if(id!==listToken)return;found=r.total;$('count').textContent=`${found} / 验证集 ${total} 张`;$('list').replaceChildren();
+ for(const item of r.images){const b=document.createElement('button');b.textContent=`${item.index} · ${item.name}`;b.classList.toggle('active',item.index===selected);b.onclick=()=>select(item.index);$('list').append(b);}
+ $('page').textContent=found?`${offset/40+1}/${Math.ceil(found/40)}`:'0/0';$('pagePrev').disabled=offset===0;$('pageNext').disabled=offset+40>=found;
+}
+function rangeFor(key){
+ const ranges=record.ranges[key],c=$('category').value;
+ if(c!=='all')return ranges[Number(c)];
+ return [Math.min(...ranges.map(r=>r[0])),Math.max(...ranges.map(r=>r[1]))];
+}
+function autoRange(){
+ if(!record)return;
+ const suffix=$('mode').value,stages=record.stages.includes('selection')?['encoder','selection']:['encoder'];
+ const ranges=stages.map(s=>rangeFor(`${s}_${suffix}`));let low=Math.min(...ranges.map(r=>r[0])),high=Math.max(...ranges.map(r=>r[1]));
+ if(high<=low)high=low+1e-6;$('lower').value=low.toPrecision(6);$('upper').value=high.toPrecision(6);
+ if(record.stages.includes('sonar')){let [lo,hi]=rangeFor('sonar_logit');if(hi<=lo)hi=lo+1e-6;$('sonarLower').value=lo.toPrecision(6);$('sonarUpper').value=hi.toPrecision(6);}
+}
+function heatUrl(stage){
+ const q=new URLSearchParams({stage,class:$('category').value,level:$('level').value,mode:$('mode').value,alpha:$('alpha').value,
+ lower:$(stage==='sonar'?'sonarLower':'lower').value,upper:$(stage==='sonar'?'sonarUpper':'upper').value,points:$('points').checked?'1':'0'});
+ return `/api/heatmap/${selected}?${q}`;
+}
+async function load(url){
+ const response=await fetch(url);
+ if(!response.ok){let message=response.statusText;try{message=(await response.json()).error||message;}catch{}throw Error(message);}
+ const blob=await response.blob(),src=URL.createObjectURL(blob);
+ await new Promise((resolve,reject)=>{const image=new Image();image.onload=resolve;image.onerror=()=>reject(Error('图片解码失败'));image.src=src;});
+ return src;
+}
+function replaceImage(id,src){const image=$(id);if(image.dataset.objectUrl)URL.revokeObjectURL(image.dataset.objectUrl);image.src=src;image.dataset.objectUrl=src;image.classList.remove('zoom');}
+async function render(){
+ if(!record||busy)return;
+ const lower=Number($('lower').value),upper=Number($('upper').value);
+ if(!Number.isFinite(lower)||!Number.isFinite(upper)||lower>=upper){status('显示下限必须小于颜色上限。',true);return;}
+ const id=++token,index=selected;status('正在生成热图…');
+ const stages=['encoder'];if(record.stages.includes('selection'))stages.push('selection');
+ const urls=stages.map(s=>heatUrl(s));urls.push(`/api/original/${index}`,`/api/points/${index}`);
+ try{
+  const images=await Promise.all(urls.map(load));
+  if(id!==token){images.forEach(src=>URL.revokeObjectURL(src));return;}
+  stages.forEach((stage,i)=>{replaceImage(stage,images[i]);$(stage+'Download').href=urls[i];$(stage+'Download').download=`val_${index}_${stage}.png`;});
+  replaceImage('original',images[stages.length]);replaceImage('queries',images[stages.length+1]);
+  $('queriesDownload').href=`/api/points/${index}`;$('queriesDownload').download=`val_${index}_queries.png`;
+  $('selectionPanel').hidden=!record.stages.includes('selection');$('sonarDetails').hidden=!record.stages.includes('sonar');
+  $('encoderTitle').textContent=record.family==='Sonarbind-Prism'?'Sonarbind-Prism 融合后的 Encoder 类别响应':
+   (record.family==='Grounding-DINO'?'Grounding DINO RGB–文本 Encoder 类别响应':'RGB–文本 Encoder 类别响应（声呐叠加前）');
+  $('queryTitle').textContent=`初始 Query（${record.visible_queries} / ${record.total_queries} 个位于原图内）`;
+  $('lowLabel').textContent=lower.toPrecision(4);$('highLabel').textContent=upper.toPrecision(4);
+  const affine=record.addition_kind==='class_agnostic_affine_prior';
+  $('note').textContent=record.stages.includes('selection')?
+   `声呐权重 ${record.sonar_weight}；${affine?'声呐项为类别共享的位置先验':'声呐项为类别条件提示'}。两张响应图共用颜色范围，低于显示下限的区域保留原图。`+
+   ($('mode').value==='sigmoid'?'Sigmoid 视图用于观察响应，不是校准后的概率。':'Logit 视图中，每个类别取所属文本 token 的平均分数。'):
+   (record.family==='Sonarbind-Prism'?'显示 RGB 与声呐经过融合 encoder 后的类别响应。':
+    (record.family==='Grounding-DINO'?'显示 Grounding DINO 的 RGB–文本 Encoder 类别响应及初始 Query。该模型不含声呐分支。':
+     '当前配置未执行声呐分数叠加，因此只显示实际存在的 Encoder 类别响应。'));
+  $('dataDownload').href=`/api/download/${index}`;$('panels').hidden=false;status('已就绪。');
+  if($('sonarDetails').open)renderSonar();
+ }catch(e){if(id===token)status(e.message,true);}
+}
+let sonarToken=0;
+async function renderSonar(){
+ if(!record||!record.stages.includes('sonar'))return;const id=++sonarToken,index=selected,url=heatUrl('sonar');
+ try{const src=await load(url);if(id!==sonarToken||index!==selected){URL.revokeObjectURL(src);return;}replaceImage('sonar',src);$('sonarDownload').href=url;$('sonarDownload').download=`val_${index}_sonar.png`;}catch(e){status(e.message,true);}
+}
+async function select(index){
+ if(index<0||index>=total)return;selected=index;const id=++token;sonarToken++;busy=true;record=null;$('panels').hidden=true;
+ $('previous').disabled=index===0;$('next').disabled=index===total-1;$('title').textContent=`验证图片 #${index}`;history.replaceState(null,'',`#image=${index}`);status('正在提取 Encoder 类别响应…');
+ const previousClass=$('category').value;
+ try{
+  const value=await json(`/api/queries/${index}`);if(id!==token)return;record=value;
+  $('category').replaceChildren();addOption($('category'),'all','全部类别（最大响应）');record.classes.forEach((name,i)=>addOption($('category'),String(i),name));
+  if([...$('category').options].some(o=>o.value===previousClass))$('category').value=previousClass;
+  $('level').replaceChildren();addOption($('level'),'all','全部尺度');record.shapes.forEach((shape,i)=>addOption($('level'),String(i),`L${i} · ${shape[0]} × ${shape[1]}`));
+  $('title').textContent=`${index} · ${record.name}`;busy=false;autoRange();await render();list().catch(e=>status(e.message,true));
+ }catch(e){if(id===token){busy=false;status(e.message,true);}}
+}
+$('search').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{offset=0;list().catch(e=>status(e.message,true));},250);};
+$('pagePrev').onclick=()=>{offset-=40;list().catch(e=>status(e.message,true));};$('pageNext').onclick=()=>{offset+=40;list().catch(e=>status(e.message,true));};
+$('previous').onclick=()=>select(selected-1);$('next').onclick=()=>select(selected+1);$('refresh').onclick=render;
+$('autoRange').onclick=()=>{autoRange();render();};$('category').onchange=$('mode').onchange=()=>{autoRange();render();};
+$('level').onchange=$('points').onchange=$('alpha').onchange=render;
+$('sonarDetails').ontoggle=()=>{if($('sonarDetails').open)renderSonar();};$('sonarRefresh').onclick=renderSonar;
+for(const id of ['original','encoder','selection','queries','sonar'])$(id).onclick=()=>$(id).classList.toggle('zoom');
+(async()=>{try{const info=await json('/api/info');total=info.total;$('model').textContent=`${info.model} · ${info.config} · ${info.checkpoint} · ${info.device}`;$('alpha').value=info.alpha;await list();status('请选择验证图片。');const initial=new URLSearchParams(location.hash.slice(1)).get('image');if(initial!==null&&/^\d+$/.test(initial))select(Number(initial));}catch(e){status(e.message,true);}})();
+</script>
+</html>

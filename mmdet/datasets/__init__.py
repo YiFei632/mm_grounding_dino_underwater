@@ -51,3 +51,4 @@ __all__ = [
     'ODVGDataset', 'MDETRStyleRefCocoDataset', 'DODDataset',
     'CustomSampleSizeSampler', 'Flickr30kDataset'
 ]
+from .uamfdet import UAOFDataset
